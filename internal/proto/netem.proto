@@ -31,6 +31,15 @@ service Netem {
     rpc TopologyStopAll(ProjectRequest) returns (AckResponse) {}
 
     // Node actions
+    // NodeAdd creates a new node in the project topology.
+    // If the topology is running and config.launch is true, the node is started.
+    // If sync is true, the network file is updated to reflect the change.
+    rpc NodeAdd(NodeAddRequest) returns (AckResponse) {}
+    // NodeDel removes a node from the project topology.
+    // All links and bridge connections attached to the node are removed,
+    // the node container/switch is stopped and deleted, and if sync is true
+    // the network file is updated.
+    rpc NodeDel(NodeDelRequest) returns (AckResponse) {}
     rpc NodeReadConfigFiles(NodeRequest) returns (ConfigFilesResponse) {}
     rpc NodeStart(NodeRequest) returns (AckResponse) {}
     rpc NodeStop(NodeRequest) returns (AckResponse) {}
@@ -217,6 +226,47 @@ message NodeInterfaceRequest {
     string prjId = 1;
     string node = 2;
     int32 ifIndex = 3;
+}
+
+// VrrpOptions configures a VRRP group on a router interface.
+message VrrpOptions {
+    int32 interface = 1;
+    int32 group = 2;
+    string address = 3;
+}
+
+// MgntOptions enables and configures an optional management interface.
+message MgntOptions {
+    bool enable = 1;
+    string address = 2;
+}
+
+// NodeConfigMsg describes the configuration of a node to create.
+message NodeConfigMsg {
+    string type = 1;
+    bool ipv6 = 2;
+    bool mpls = 3;
+    repeated string vrfs = 4;
+    repeated VrrpOptions vrrps = 5;
+    repeated string volumes = 6;
+    string image = 7;
+    bool launch = 8;
+    MgntOptions mgnt = 9;
+}
+
+// NodeAddRequest is the request payload for the NodeAdd RPC.
+message NodeAddRequest {
+    string prjId = 1;
+    string node = 2;
+    NodeConfigMsg config = 3;
+    bool sync = 4;
+}
+
+// NodeDelRequest is the request payload for the NodeDel RPC.
+message NodeDelRequest {
+    string prjId = 1;
+    string node = 2;
+    bool sync = 3;
 }
 
 message NodeRequest {

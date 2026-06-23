@@ -37,8 +37,8 @@ func netemQdisc(devID netlink.Link, delay int, jitter int, loss float64) tc.Obje
 		Msg: tc.Msg{
 			Family:  unix.AF_UNSPEC,
 			Ifindex: uint32(devID.Attrs().Index),
-			Handle:  core.BuildHandle(0x10, 0x0),
-			Parent:  core.BuildHandle(0x1, 0x1),
+			Handle:  core.BuildHandle(0x1, 0x0),
+			Parent:  tc.HandleRoot,
 			Info:    0,
 		},
 		Attribute: tc.Attribute{

@@ -279,6 +279,18 @@ func TestTopology_Save(t *testing.T) {
 	if _, err := topology.Run(nil); err != nil {
 		t.Errorf("Run returns an error: %v", err)
 	}
+
+	// load node configs (Run no longer does it automatically)
+	configPath := path.Join(dir, configDir)
+	timeout := options.ServerConfig.Docker.Timeoutop
+	for _, node := range topology.GetAllNodes() {
+		if node.IsRunning() {
+			if _, err := node.LoadConfig(configPath, timeout); err != nil {
+				t.Errorf("Unable to load config of node %s: %v", node.GetName(), err)
+			}
+		}
+	}
+
 	if err := topology.Save(nil); err != nil {
 		t.Errorf("Save returns an error: %v", err)
 	}

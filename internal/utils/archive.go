@@ -146,7 +146,7 @@ func OpenArchive(dstPath string, r io.Reader) error {
 				"in file",
 				name,
 			)
-			return fmt.Errorf(msg)
+			return fmt.Errorf("%s", msg)
 		}
 	}
 

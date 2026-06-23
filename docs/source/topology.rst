@@ -120,6 +120,16 @@ Example of docker node
           enable: yes
           address: 192.168.0.1/24
 
+It is also possible to override the default docker image associated to a node type
+by using the ``image`` option. For example, to use a custom FRR image only for ``R1``:
+
+.. code-block:: yaml
+
+    nodes:
+      R1:
+        type: docker.router
+        image: myregistry/gonetem-frr:custom
+
 Extra : init script
 """""""""""""""""""
 

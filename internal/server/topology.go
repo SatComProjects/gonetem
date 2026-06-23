@@ -274,7 +274,7 @@ type NetemTopologyManager struct {
 	mgntNet     *MgntNetwork
 	running     bool
 	logger      *logrus.Entry
-	linkMu      sync.Mutex
+	mu          sync.Mutex
 }
 
 func (t *NetemTopologyManager) Check() error {
@@ -817,8 +817,8 @@ func (t *NetemTopologyManager) GetLink(peer1V string, peer2V string) (*NetemLink
 }
 
 func (t *NetemTopologyManager) LinkAdd(linkCfg LinkConfig, sync bool) error {
-	t.linkMu.Lock()
-	defer t.linkMu.Unlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	_, _, err := t.GetLink(linkCfg.Peer1, linkCfg.Peer2)
 	if err == nil {
@@ -864,8 +864,8 @@ func (t *NetemTopologyManager) LinkAdd(linkCfg LinkConfig, sync bool) error {
 }
 
 func (t *NetemTopologyManager) LinkDel(linkCfg LinkConfig, sync bool) error {
-	t.linkMu.Lock()
-	defer t.linkMu.Unlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	l, idx, err := t.GetLink(linkCfg.Peer1, linkCfg.Peer2)
 	if err != nil {
@@ -891,8 +891,8 @@ func (t *NetemTopologyManager) LinkDel(linkCfg LinkConfig, sync bool) error {
 }
 
 func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
-	t.linkMu.Lock()
-	defer t.linkMu.Unlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	l, _, err := t.GetLink(linkCfg.Peer1, linkCfg.Peer2)
 	if err != nil {
@@ -912,6 +912,28 @@ func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
 	l.Config.Peer1QoS = linkCfg.Peer1QoS
 	l.Config.Peer2QoS = linkCfg.Peer2QoS
 
+	// If the request provides top-level QoS values, use them. Otherwise, if both
+	// peers have identical QoS, mirror them into the top-level fields so the
+	// topology file stays consistent and tests can read link.Config.Delay etc.
+	if linkCfg.Delay != 0 || linkCfg.Jitter != 0 || linkCfg.Loss != 0.0 ||
+		linkCfg.Rate != 0 || linkCfg.Buffer != 0.0 || linkCfg.Burst != 0 {
+		l.Config.Delay = linkCfg.Delay
+		l.Config.Jitter = linkCfg.Jitter
+		l.Config.Loss = linkCfg.Loss
+		l.Config.Rate = linkCfg.Rate
+		l.Config.Buffer = linkCfg.Buffer
+		l.Config.Burst = linkCfg.Burst
+	} else if linkCfg.Peer1QoS == linkCfg.Peer2QoS &&
+		(linkCfg.Peer1QoS.Delay != 0 || linkCfg.Peer1QoS.Jitter != 0 || linkCfg.Peer1QoS.Loss != 0.0 ||
+			linkCfg.Peer1QoS.Rate != 0 || linkCfg.Peer1QoS.Buffer != 0.0 || linkCfg.Peer1QoS.Burst != 0) {
+		l.Config.Delay = linkCfg.Peer1QoS.Delay
+		l.Config.Jitter = linkCfg.Peer1QoS.Jitter
+		l.Config.Loss = linkCfg.Peer1QoS.Loss
+		l.Config.Rate = linkCfg.Peer1QoS.Rate
+		l.Config.Buffer = linkCfg.Peer1QoS.Buffer
+		l.Config.Burst = linkCfg.Peer1QoS.Burst
+	}
+
 	peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
 	peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
 
@@ -930,6 +952,171 @@ func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
 	if err := l.SetPeer2Netem(peer2IfName, peer2Netns); err != nil {
 		return err
 	}
+
+	if sync {
+		return t.SynchroniseTopology()
+	}
+	return nil
+}
+
+func (t *NetemTopologyManager) deleteLink(l *NetemLink) error {
+	peer1Netns, err := l.Peer1.Node.GetNetns()
+	if err != nil {
+		return err
+	}
+	defer peer1Netns.Close()
+
+	peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
+	return link.DeleteLink(peer1IfName, peer1Netns)
+}
+
+func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.GetNode(name) != nil {
+		return fmt.Errorf("node %s already exists in the topology", name)
+	}
+
+	existingNodes := make([]string, 0, len(t.nodes))
+	for _, node := range t.nodes {
+		existingNodes = append(existingNodes, node.Instance.GetName())
+	}
+
+	if err := checkNodeConfig(name, config, existingNodes); err != nil {
+		return err
+	}
+
+	shortName, err := t.IdGenerator.GetId(name)
+	if err != nil {
+		return err
+	}
+
+	node, err := CreateNode(t.prjID, name, shortName, config)
+	if err != nil {
+		if node != nil && !reflect.ValueOf(node).IsNil() {
+			node.Close()
+		}
+		return fmt.Errorf("unable to create node %s: %w", name, err)
+	}
+
+	netemNode := NetemNode{
+		Instance:        node,
+		LaunchAtStartup: config.Launch,
+		Config:          config,
+	}
+	t.nodes = append(t.nodes, netemNode)
+
+	if t.running {
+		if config.Launch {
+			if err := node.Start(); err != nil {
+				node.Close()
+				t.nodes = t.nodes[:len(t.nodes)-1]
+				return fmt.Errorf("unable to start node %s: %w", name, err)
+			}
+		}
+		if config.Mgnt.Enable {
+			if err := t.setupMgntLink(&netemNode); err != nil {
+				if config.Launch {
+					node.Stop()
+				}
+				node.Close()
+				t.nodes = t.nodes[:len(t.nodes)-1]
+				return fmt.Errorf("unable to setup mgnt link for node %s: %w", name, err)
+			}
+		}
+	}
+
+	if sync {
+		return t.SynchroniseTopology()
+	}
+	return nil
+}
+
+func (t *NetemTopologyManager) NodeDel(name string, sync bool) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	nodeIdx := -1
+	for idx, node := range t.nodes {
+		if node.Instance.GetName() == name {
+			nodeIdx = idx
+			break
+		}
+	}
+	if nodeIdx == -1 {
+		return fmt.Errorf("node %s not found in the topology", name)
+	}
+
+	targetNode := t.nodes[nodeIdx]
+
+	// remove all p2p links connected to this node
+	for i := len(t.links) - 1; i >= 0; i-- {
+		l := t.links[i]
+		if l.Peer1.Node.GetName() == name || l.Peer2.Node.GetName() == name {
+			if err := t.deleteLink(l); err != nil {
+				return fmt.Errorf("unable to delete link for node %s: %w", name, err)
+			}
+			t.links = append(t.links[:i], t.links[i+1:]...)
+		}
+	}
+
+	// remove all bridge peers connected to this node
+	if t.running {
+		rootNs := link.GetRootNetns()
+		defer rootNs.Close()
+
+		for _, br := range t.bridges {
+			for i := len(br.Peers) - 1; i >= 0; i-- {
+				p := br.Peers[i]
+				if p.Node.GetName() == name {
+					ifName := fmt.Sprintf("%s%s%s.%d", options.NETEM_ID, t.prjID, p.Node.GetShortName(), p.IfIndex)
+					if err := link.DeleteLink(ifName, rootNs); err != nil {
+						return fmt.Errorf("unable to delete bridge link for node %s: %w", name, err)
+					}
+					br.Peers = append(br.Peers[:i], br.Peers[i+1:]...)
+					for j, ifName := range br.Config.Interfaces {
+						peerParts := strings.Split(ifName, ".")
+						if peerParts[0] == name {
+							br.Config.Interfaces = append(br.Config.Interfaces[:j], br.Config.Interfaces[j+1:]...)
+							break
+						}
+					}
+				}
+			}
+		}
+	} else {
+		for _, br := range t.bridges {
+			for i := len(br.Peers) - 1; i >= 0; i-- {
+				if br.Peers[i].Node.GetName() == name {
+					br.Peers = append(br.Peers[:i], br.Peers[i+1:]...)
+					for j, ifName := range br.Config.Interfaces {
+						peerParts := strings.Split(ifName, ".")
+						if peerParts[0] == name {
+							br.Config.Interfaces = append(br.Config.Interfaces[:j], br.Config.Interfaces[j+1:]...)
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// detach mgnt interface if necessary
+	if t.running && t.mgntNet != nil && targetNode.Config.Mgnt.Enable {
+		mgntIfName := fmt.Sprintf("%s%s%s.m", options.NETEM_ID, t.prjID, targetNode.Instance.GetShortName())
+		if err := t.mgntNet.DetachInterface(mgntIfName); err != nil {
+			return fmt.Errorf("unable to detach mgnt interface for node %s: %w", name, err)
+		}
+	}
+
+	// close the node (stop if running and remove container/bridge)
+	if err := targetNode.Instance.Close(); err != nil {
+		return fmt.Errorf("unable to close node %s: %w", name, err)
+	}
+
+	// remove node from list
+	t.nodes = append(t.nodes[:nodeIdx], t.nodes[nodeIdx+1:]...)
 
 	if sync {
 		return t.SynchroniseTopology()

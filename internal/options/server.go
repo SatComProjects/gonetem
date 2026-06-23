@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	VERSION               = "0.6.0"
+	VERSION               = "0.6.1"
 	NETEM_ID              = "ntm"
 	SERVER_CONFIG_FILE    = "/etc/gonetem/config.yaml"
 	MINIMUM_SERVER_CONFIG = `

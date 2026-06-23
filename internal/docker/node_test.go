@@ -339,6 +339,51 @@ func TestDockerNode_AttachLink(t *testing.T) {
 	}
 }
 
+func TestDockerNode_ImageOverride(t *testing.T) {
+	skipUnlessRoot(t)
+
+	options.InitServerConfig()
+	prjID := utils.RandString(4)
+
+	overrideImage := options.ServerConfig.Docker.Nodes.Host.Image
+	expectedImage := options.GetDockerImageId(overrideImage)
+
+	// check that the override image is available
+	client, err := NewDockerClient()
+	if err != nil {
+		t.Fatalf("Unable to create docker client: %v", err)
+	}
+	defer client.Close()
+
+	present, err := client.IsImagePresent(context.Background(), expectedImage)
+	if err != nil {
+		t.Fatalf("Unable to check image presence: %v", err)
+	}
+	if !present {
+		t.Skipf("Override image %s is not present, skipping test", expectedImage)
+	}
+
+	// Create a router node but override its image with the host image
+	config := DockerNodeOptions{
+		Name:  utils.RandString(3),
+		Image: overrideImage,
+	}
+	node, err := NewDockerNode(prjID, "router", config)
+	if err != nil {
+		t.Fatalf("Unable to create docker node: %v", err)
+	}
+	defer node.Close()
+
+	container, err := client.Get(context.Background(), node.ID)
+	if err != nil {
+		t.Fatalf("Unable to inspect container: %v", err)
+	}
+
+	if container.Image != expectedImage {
+		t.Fatalf("Container image %s does not match overridden image %s", container.Image, expectedImage)
+	}
+}
+
 func TestDockerNode_Volumes(t *testing.T) {
 	skipUnlessRoot(t)
 

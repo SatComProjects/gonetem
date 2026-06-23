@@ -14,10 +14,16 @@ import (
 	"github.com/mroy31/gonetem/internal/options"
 	"github.com/mroy31/gonetem/internal/proto"
 	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
+
+func TestMain(m *testing.M) {
+	logrus.SetLevel(logrus.ErrorLevel)
+	os.Exit(m.Run())
+}
 
 func dialer() func(context.Context, string) (net.Conn, error) {
 	listener := bufconn.Listen(1024 * 1024)
@@ -255,5 +261,112 @@ nodes:
 	}
 	if string(newNetworkData) != newNetwork {
 		t.Errorf("Saved network has not the expected content")
+	}
+}
+
+func TestServer_NodeAddDel(t *testing.T) {
+	options.InitServerConfig()
+	ctx := context.Background()
+
+	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	if err != nil {
+		stdlog.Fatal(err)
+	}
+	defer conn.Close()
+
+	client := proto.NewNetemClient(conn)
+
+	// create simple project
+	prjPath := "/tmp/prjtest-nodeadddel.gnet"
+	if err := createProject(prjPath, simpleNetwork); err != nil {
+		t.Fatalf("Unable to create .gnet file: %v", err)
+	}
+	defer os.Remove(prjPath)
+	data, err := os.ReadFile(prjPath)
+	if err != nil {
+		t.Fatalf("Unable to open created .gnet file: %v", err)
+	}
+
+	// open project
+	openResponse, err := client.ProjectOpen(ctx, &proto.OpenRequest{
+		Name: filepath.Base(prjPath),
+		Data: data,
+	})
+	if err != nil {
+		t.Fatalf("OpenProject method return an error: %v", err)
+	}
+	prjID := openResponse.GetId()
+	defer func() {
+		closeStream, err := client.ProjectClose(ctx, &proto.ProjectRequest{Id: prjID})
+		if err != nil {
+			t.Errorf("CloseProject method return an error: %v", err)
+		}
+		for {
+			_, err := closeStream.Recv()
+			if err == io.EOF {
+				return
+			} else if err != nil {
+				t.Errorf("ProjectClose stream return an error: %v", err)
+				return
+			}
+		}
+	}()
+
+	// add a new node
+	addResponse, err := client.NodeAdd(ctx, &proto.NodeAddRequest{
+		PrjId: prjID,
+		Node:  "newhost",
+		Config: &proto.NodeConfigMsg{
+			Type:   "docker.host",
+			Ipv6:   true,
+			Launch: false,
+		},
+		Sync: true,
+	})
+	if err != nil {
+		t.Fatalf("NodeAdd method return an error: %v", err)
+	}
+	if addResponse.GetStatus().GetCode() != proto.StatusCode_OK {
+		t.Fatalf("NodeAdd returned an error status: %s", addResponse.GetStatus().GetError())
+	}
+
+	// check the node exists
+	statusResponse, err := client.ProjectGetStatus(ctx, &proto.ProjectRequest{Id: prjID})
+	if err != nil {
+		t.Fatalf("ProjectGetStatus method return an error: %v", err)
+	}
+	found := false
+	for _, n := range statusResponse.GetNodes() {
+		if n.GetName() == "newhost" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Node 'newhost' was not found after NodeAdd")
+	}
+
+	// delete the node
+	delResponse, err := client.NodeDel(ctx, &proto.NodeDelRequest{
+		PrjId: prjID,
+		Node:  "newhost",
+		Sync:  true,
+	})
+	if err != nil {
+		t.Fatalf("NodeDel method return an error: %v", err)
+	}
+	if delResponse.GetStatus().GetCode() != proto.StatusCode_OK {
+		t.Fatalf("NodeDel returned an error status: %s", delResponse.GetStatus().GetError())
+	}
+
+	// check the node no longer exists
+	statusResponse, err = client.ProjectGetStatus(ctx, &proto.ProjectRequest{Id: prjID})
+	if err != nil {
+		t.Fatalf("ProjectGetStatus method return an error: %v", err)
+	}
+	for _, n := range statusResponse.GetNodes() {
+		if n.GetName() == "newhost" {
+			t.Fatalf("Node 'newhost' was still found after NodeDel")
+		}
 	}
 }

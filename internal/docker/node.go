@@ -38,6 +38,7 @@ type DockerNodeOptions struct {
 	Vrfs      []string
 	Vrrps     []VrrpOptions
 	Volumes   []string
+	Image     string
 }
 
 type DockerNodeStatus struct {
@@ -839,6 +840,9 @@ func NewDockerNode(prjID string, nType string, dockerOpts DockerNodeOptions) (*D
 	}
 
 	imgName := options.GetDockerImageId(nConfig.Image)
+	if dockerOpts.Image != "" {
+		imgName = options.GetDockerImageId(dockerOpts.Image)
+	}
 	if err := node.Create(imgName, dockerOpts.Ipv6); err != nil {
 		return node, err
 	}

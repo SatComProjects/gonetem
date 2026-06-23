@@ -43,6 +43,33 @@ func getLinkConfigFromRequest(request *proto.LinkRequest) LinkConfig {
 	}
 }
 
+func getNodeConfigFromRequest(request *proto.NodeAddRequest) NodeConfig {
+	rConfig := request.GetConfig()
+	config := NodeConfig{
+		Type:    rConfig.GetType(),
+		IPv6:    rConfig.GetIpv6(),
+		Mpls:    rConfig.GetMpls(),
+		Vrfs:    rConfig.GetVrfs(),
+		Volumes: rConfig.GetVolumes(),
+		Image:   rConfig.GetImage(),
+		Launch:  rConfig.GetLaunch(),
+		Mgnt: MgntOptions{
+			Enable:  rConfig.GetMgnt().GetEnable(),
+			Address: rConfig.GetMgnt().GetAddress(),
+		},
+	}
+
+	for _, vrrp := range rConfig.GetVrrps() {
+		config.Vrrps = append(config.Vrrps, VrrpOptions{
+			Interface: int(vrrp.GetInterface()),
+			Group:     int(vrrp.GetGroup()),
+			Address:   vrrp.GetAddress(),
+		})
+	}
+
+	return config
+}
+
 type netemServer struct {
 	proto.UnimplementedNetemServer
 }
@@ -396,6 +423,37 @@ func (s *netemServer) LinkDel(ctx context.Context, request *proto.LinkRequest) (
 	}
 
 	if err := project.Topology.LinkDel(linkConfig, request.GetSync()); err != nil {
+		return nil, err
+	}
+
+	return &proto.AckResponse{
+		Status: &proto.Status{Code: proto.StatusCode_OK},
+	}, nil
+}
+
+func (s *netemServer) NodeAdd(ctx context.Context, request *proto.NodeAddRequest) (*proto.AckResponse, error) {
+	project := ProjectGetOne(request.GetPrjId())
+	if project == nil {
+		return nil, &ProjectNotFoundError{request.GetPrjId()}
+	}
+
+	config := getNodeConfigFromRequest(request)
+	if err := project.Topology.NodeAdd(request.GetNode(), config, request.GetSync()); err != nil {
+		return nil, err
+	}
+
+	return &proto.AckResponse{
+		Status: &proto.Status{Code: proto.StatusCode_OK},
+	}, nil
+}
+
+func (s *netemServer) NodeDel(ctx context.Context, request *proto.NodeDelRequest) (*proto.AckResponse, error) {
+	project := ProjectGetOne(request.GetPrjId())
+	if project == nil {
+		return nil, &ProjectNotFoundError{request.GetPrjId()}
+	}
+
+	if err := project.Topology.NodeDel(request.GetNode(), request.GetSync()); err != nil {
 		return nil, err
 	}
 

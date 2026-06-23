@@ -46,6 +46,25 @@ func (mNet *MgntNetwork) AttachInterface(ifName string) error {
 	return nil
 }
 
+func (mNet *MgntNetwork) DetachInterface(ifName string) error {
+	if mNet.Instance == nil {
+		return nil
+	}
+
+	if err := link.DeleteLink(ifName, mNet.NetNs); err != nil {
+		return fmt.Errorf("unable to detach %s from mgnt network: %v", ifName, err)
+	}
+
+	for i, name := range mNet.Interfaces {
+		if name == ifName {
+			mNet.Interfaces = append(mNet.Interfaces[:i], mNet.Interfaces[i+1:]...)
+			break
+		}
+	}
+
+	return nil
+}
+
 func (mNet *MgntNetwork) Close() error {
 	for _, ifName := range mNet.Interfaces {
 		if err := link.DeleteLink(ifName, mNet.NetNs); err != nil {
