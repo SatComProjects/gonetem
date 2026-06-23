@@ -386,6 +386,9 @@ func (s *netemServer) LinkUpdate(ctx context.Context, request *proto.LinkRequest
 		return nil, &ProjectNotFoundError{request.GetPrjId()}
 	}
 
+	if request.GetLink() == nil {
+		return nil, fmt.Errorf("link configuration is missing")
+	}
 	linkConfig := getLinkConfigFromRequest(request)
 	if err := project.Topology.LinkUpdate(linkConfig, request.GetSync()); err != nil {
 		return nil, err
@@ -402,6 +405,9 @@ func (s *netemServer) LinkAdd(ctx context.Context, request *proto.LinkRequest) (
 		return nil, &ProjectNotFoundError{request.GetPrjId()}
 	}
 
+	if request.GetLink() == nil {
+		return nil, fmt.Errorf("link configuration is missing")
+	}
 	linkConfig := getLinkConfigFromRequest(request)
 	if err := project.Topology.LinkAdd(linkConfig, request.GetSync()); err != nil {
 		return nil, err

@@ -270,6 +270,9 @@ func (o *OvsProjectInstance) Close() error {
 }
 
 func NewOvsInstance(prjID string) (*OvsProjectInstance, error) {
+	mutex.Lock()
+	defer mutex.Unlock()
+
 	_, ok := ovsInstances[prjID]
 	if ok {
 		return nil, fmt.Errorf("ovswitch container already exists")
@@ -316,6 +319,9 @@ func NewOvsInstance(prjID string) (*OvsProjectInstance, error) {
 }
 
 func GetOvsInstance(prjID string) *OvsProjectInstance {
+	mutex.Lock()
+	defer mutex.Unlock()
+
 	instance, ok := ovsInstances[prjID]
 	if ok {
 		return instance
@@ -324,11 +330,14 @@ func GetOvsInstance(prjID string) *OvsProjectInstance {
 }
 
 func CloseOvsInstance(prjID string) error {
-	ovs := GetOvsInstance(prjID)
-	if ovs == nil {
+	mutex.Lock()
+	ovs, ok := ovsInstances[prjID]
+	if !ok {
+		mutex.Unlock()
 		return fmt.Errorf("ovswitch container not found")
 	}
+	delete(ovsInstances, prjID)
+	mutex.Unlock()
 
-	defer delete(ovsInstances, prjID)
 	return ovs.Close()
 }
