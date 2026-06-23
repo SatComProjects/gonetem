@@ -21,24 +21,26 @@ import (
 
 func getLinkConfigFromRequest(request *proto.LinkRequest) LinkConfig {
 	rLink := request.GetLink()
+	p1qos := rLink.GetPeer1Qos()
+	p2qos := rLink.GetPeer2Qos()
 	return LinkConfig{
 		Peer1: rLink.GetPeer1(),
 		Peer2: rLink.GetPeer2(),
 		Peer1QoS: QoSConfig{
-			Loss:   float64(rLink.Peer1Qos.Loss),
-			Delay:  int(rLink.Peer1Qos.Delay),
-			Jitter: int(rLink.Peer1Qos.Jitter),
-			Rate:   int(rLink.Peer1Qos.Rate),
-			Buffer: float64(rLink.Peer1Qos.Buffer),
-			Burst:  int(rLink.Peer1Qos.Burst),
+			Loss:   float64(p1qos.GetLoss()),
+			Delay:  int(p1qos.GetDelay()),
+			Jitter: int(p1qos.GetJitter()),
+			Rate:   int(p1qos.GetRate()),
+			Buffer: float64(p1qos.GetBuffer()),
+			Burst:  int(p1qos.GetBurst()),
 		},
 		Peer2QoS: QoSConfig{
-			Loss:   float64(rLink.Peer2Qos.Loss),
-			Delay:  int(rLink.Peer2Qos.Delay),
-			Jitter: int(rLink.Peer2Qos.Jitter),
-			Rate:   int(rLink.Peer2Qos.Rate),
-			Buffer: float64(rLink.Peer2Qos.Buffer),
-			Burst:  int(rLink.Peer2Qos.Burst),
+			Loss:   float64(p2qos.GetLoss()),
+			Delay:  int(p2qos.GetDelay()),
+			Jitter: int(p2qos.GetJitter()),
+			Rate:   int(p2qos.GetRate()),
+			Buffer: float64(p2qos.GetBuffer()),
+			Burst:  int(p2qos.GetBurst()),
 		},
 	}
 }

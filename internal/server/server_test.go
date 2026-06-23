@@ -41,6 +41,22 @@ func dialer() func(context.Context, string) (net.Conn, error) {
 	}
 }
 
+func TestGetLinkConfigFromRequest_NilQoS(t *testing.T) {
+	cfg := getLinkConfigFromRequest(&proto.LinkRequest{
+		Link: &proto.LinkConfig{
+			Peer1: "R1",
+			Peer2: "R2",
+		},
+	})
+	if cfg.Peer1 != "R1" || cfg.Peer2 != "R2" {
+		t.Errorf("unexpected peers: %s <-> %s", cfg.Peer1, cfg.Peer2)
+	}
+	// All QoS fields should default to zero without panicking.
+	if cfg.Peer1QoS != (QoSConfig{}) || cfg.Peer2QoS != (QoSConfig{}) {
+		t.Errorf("expected zero-valued QoS configs, got %+v and %+v", cfg.Peer1QoS, cfg.Peer2QoS)
+	}
+}
+
 func TestServer_Version(t *testing.T) {
 	options.InitServerConfig()
 	ctx := context.Background()
