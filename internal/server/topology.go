@@ -227,7 +227,15 @@ func (l *NetemLink) SetPeer1Netem(ifName string, ns netns.NsHandle) error {
 
 	// create netem qdisc if necessary
 	if l.IsNetemRequired(peerQoS) {
-		if err := link.Netem(ifName, ns, peerQoS.Delay, peerQoS.Jitter, peerQoS.Loss, l.HasPeer1Netem); err != nil {
+		// If rate limiting is also configured, netem must be attached as a child
+		// of the tbf inner queue because only one qdisc can sit at the root.
+		parent := link.RootParent
+		handle := link.RootHandle
+		if peerQoS.Rate > 0 {
+			parent = link.TbfInnerParent
+			handle = link.NetemChildHandle
+		}
+		if err := link.Netem(ifName, ns, peerQoS.Delay, peerQoS.Jitter, peerQoS.Loss, l.HasPeer1Netem, parent, handle); err != nil {
 			return err
 		}
 		l.HasPeer1Netem = true
@@ -240,7 +248,13 @@ func (l *NetemLink) SetPeer2Netem(ifName string, ns netns.NsHandle) error {
 	peerQoS := l.Config.GetPeer2QoS()
 
 	if l.IsNetemRequired(peerQoS) {
-		if err := link.Netem(ifName, ns, peerQoS.Delay, peerQoS.Jitter, peerQoS.Loss, l.HasPeer2Netem); err != nil {
+		parent := link.RootParent
+		handle := link.RootHandle
+		if peerQoS.Rate > 0 {
+			parent = link.TbfInnerParent
+			handle = link.NetemChildHandle
+		}
+		if err := link.Netem(ifName, ns, peerQoS.Delay, peerQoS.Jitter, peerQoS.Loss, l.HasPeer2Netem, parent, handle); err != nil {
 			return err
 		}
 		l.HasPeer2Netem = true
@@ -936,6 +950,20 @@ func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
 
 	peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
 	peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
+
+	// Reset existing qdiscs before re-applying them.  This lets us move cleanly
+	// between standalone netem, standalone tbf and chained tbf+netem without
+	// having to compute every possible transition.
+	if err := link.ResetQdiscs(peer1IfName, peer1Netns); err != nil {
+		return err
+	}
+	if err := link.ResetQdiscs(peer2IfName, peer2Netns); err != nil {
+		return err
+	}
+	l.HasPeer1Netem = false
+	l.HasPeer2Netem = false
+	l.HasPeer1Tbf = false
+	l.HasPeer2Tbf = false
 
 	// create/update tbf qdisc if necessary
 	if err := l.SetPeer1TBF(peer1IfName, peer1Netns); err != nil {
