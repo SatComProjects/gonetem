@@ -26,7 +26,7 @@ Request: ``NodeAddRequest``
 .. code-block:: protobuf
 
     message NodeConfigMsg {
-        string type = 1;                  // e.g. "docker.router", "docker.host", "ovs"
+        string type = 1;                  // e.g. "docker.router", "docker.host", "ovs", "namespace"
         bool ipv6 = 2;
         bool mpls = 3;
         repeated string vrfs = 4;

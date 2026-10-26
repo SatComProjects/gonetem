@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,6 +88,26 @@ func setupStartedContainer(t *testing.T, imgId DockerImageT) (*DockerClient, str
 	}
 }
 
+func TestNewDockerClientIsShared(t *testing.T) {
+	c1, err := NewDockerClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := NewDockerClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c1.cli != c2.cli {
+		t.Fatal("expected a shared Docker client")
+	}
+	if err := c1.Close(); err != nil {
+		t.Fatalf("Close returned an error: %v", err)
+	}
+	if c2.cli == nil {
+		t.Fatal("shared client was invalidated by Close")
+	}
+}
+
 func TestDockerClient_ImagePresent(t *testing.T) {
 	client, teardown := setupClient(t)
 	defer teardown()
@@ -116,6 +138,43 @@ func TestDockerClient_ImagePresent(t *testing.T) {
 				t.Errorf("IsImagePresent returns wrong result: %v != %v", present, tt.result)
 			}
 		})
+	}
+}
+
+func TestImagePresentCachedCollapsesLookups(t *testing.T) {
+	image := fmt.Sprintf("cache-test-%d", time.Now().UnixNano())
+	var calls int32
+
+	check := func(context.Context) (bool, error) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(10 * time.Millisecond)
+		return true, nil
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			present, err := imagePresentCached(context.Background(), image, check)
+			if err != nil || !present {
+				t.Errorf("unexpected cache result: present=%v err=%v", present, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("image lookup was executed %d times, expected 1", got)
+	}
+}
+
+func TestDockerClient_RmMissingIsNoop(t *testing.T) {
+	client, teardown := setupClient(t)
+	defer teardown()
+
+	if err := client.Rm(context.Background(), "gonetem-missing-container"); err != nil {
+		t.Fatalf("Rm of a missing container returned an error: %v", err)
 	}
 }
 

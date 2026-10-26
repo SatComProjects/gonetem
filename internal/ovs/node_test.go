@@ -1,12 +1,75 @@
 package ovs
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/mroy31/gonetem/internal/link"
 	"github.com/mroy31/gonetem/internal/options"
 	"github.com/mroy31/gonetem/internal/utils"
 )
+
+func TestNewOvsNodeWithoutInstance(t *testing.T) {
+	node, err := NewOvsNode(utils.RandString(6), "sw1", "sw1")
+	if err != nil {
+		t.Fatalf("NewOvsNode returned an error: %v", err)
+	}
+	if node.OvsInstance != nil {
+		t.Fatal("new lazy OVS node unexpectedly has an instance")
+	}
+	if err := node.Close(); err != nil {
+		t.Fatalf("Close returned an error: %v", err)
+	}
+}
+
+func TestOvsNode_DetachInterface(t *testing.T) {
+	node := &OvsNode{
+		Interfaces: map[string]link.IfState{"sw1.0": link.IFSTATE_UP},
+		Running:    false,
+	}
+
+	if err := node.DetachInterface("sw1.0"); err != nil {
+		t.Fatalf("DetachInterface returned an error: %v", err)
+	}
+	if _, ok := node.Interfaces["sw1.0"]; ok {
+		t.Fatal("interface was not removed from bookkeeping")
+	}
+}
+
+func TestOvsNodeGetInterfacesStateKeepsFullName(t *testing.T) {
+	node := &OvsNode{Interfaces: map[string]link.IfState{"sw1.0": link.IFSTATE_UP}}
+
+	states := node.GetInterfacesState()
+	state, ok := states["sw1.0"]
+	if !ok {
+		t.Fatalf("full interface name missing from state map: %#v", states)
+	}
+	if state != link.IFSTATE_UP {
+		t.Fatalf("unexpected state: %v", state)
+	}
+	if _, ok := states["0"]; ok {
+		t.Fatalf("stripped interface name leaked into state map: %#v", states)
+	}
+}
+
+func TestOvsNode_InterfaceMapConcurrentAccess(t *testing.T) {
+	node := &OvsNode{Interfaces: make(map[string]link.IfState)}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = node.AttachInterface("sw1.0", 0, false)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = node.GetInterfacesState()
+			_ = node.IsRunning()
+		}()
+	}
+	wg.Wait()
+}
 
 func TestOvsNode_StartStop(t *testing.T) {
 	options.InitServerConfig()
@@ -32,9 +95,24 @@ func TestOvsNode_StartStop(t *testing.T) {
 	}
 	defer node.Close()
 
+	ports := []string{"p1", "p2"}
+	for _, port := range ports {
+		if err := instance.Exec([]string{"ip", "link", "add", port, "type", "dummy"}); err != nil {
+			t.Fatalf("Unable to create dummy interface %s: %v", port, err)
+		}
+		if err := node.AttachInterface(port, 0, false); err != nil {
+			t.Fatalf("Unable to attach interface %s: %v", port, err)
+		}
+	}
+
 	// Start the node
 	if err := node.Start(); err != nil {
 		t.Errorf("Unable to start ovs node: %v", err)
+	}
+	for _, port := range ports {
+		if err := instance.Exec([]string{"ovs-vsctl", "port-to-br", port}); err != nil {
+			t.Errorf("Port %s was not added to the bridge: %v", port, err)
+		}
 	}
 
 	// Stop the node

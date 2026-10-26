@@ -38,19 +38,19 @@ func TestOptions_ImageId(t *testing.T) {
 	}{
 		{
 			imgType:    IMG_HOST,
-			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Host.Image, VERSION),
+			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Host.Image, IMAGE_VERSION),
 		},
 		{
 			imgType:    IMG_SERVER,
-			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Server.Image, VERSION),
+			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Server.Image, IMAGE_VERSION),
 		},
 		{
 			imgType:    IMG_ROUTER,
-			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Router.Image, VERSION),
+			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Router.Image, IMAGE_VERSION),
 		},
 		{
 			imgType:    IMG_OVS,
-			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.OvsImage, VERSION),
+			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.OvsImage, IMAGE_VERSION),
 		},
 	}
 	for _, test := range tests {
@@ -60,8 +60,20 @@ func TestOptions_ImageId(t *testing.T) {
 		}
 	}
 
-	id := GetDockerImageId("mroy31/ovs-img:0.0.0")
-	if id != "mroy31/ovs-img:0.0.0" {
-		t.Fatalf("Error: %s != mroy31/ovs-img:0.0.0", id)
+	tagged := []string{
+		"mroy31/ovs-img:0.0.0",
+		"mroy31/ovs-img:1.0-rc1",
+		"repo@sha256:abcdef",
+	}
+	for _, image := range tagged {
+		if id := GetDockerImageId(image); id != image {
+			t.Errorf("existing tag or digest was modified: %s != %s", id, image)
+		}
+	}
+
+	withPort := "registry.example.com:5000/ovs-img"
+	expectedPort := withPort + ":" + IMAGE_VERSION
+	if id := GetDockerImageId(withPort); id != expectedPort {
+		t.Fatalf("registry port was mistaken for a tag: %s != %s", id, expectedPort)
 	}
 }

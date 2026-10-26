@@ -18,7 +18,8 @@ The content of each section is explained below.
 Nodes
 -----
 
-In the section ``nodes``, you can add host/server/router/switch in the topology.
+In the section ``nodes``, you can add host/server/router/switch/network namespace
+nodes in the topology.
 At minimum, each node is identified by :
 
   1. a name
@@ -36,10 +37,11 @@ These 2 information are declared like that :
       switch_name:
         type: ovs
 
-2 main types of node are available in gonetem :
+3 main types of node are available in gonetem :
 
   1. docker node declared with the type ``docker.<type>``
   2. switch declared with the type ``ovs``
+  3. network namespace node declared with the type ``namespace``
 
 More details are given below for each type of node.
 
@@ -158,6 +160,41 @@ Example of switch nodes
 When you launch a console on a switch, a custom prompt appears allowing basic
 commands on the switch (for now, vlan and bonding configuration).
 For more details on available commands, see :ref:`here <ovs>`.
+
+Network namespace node
+``````````````````````
+
+A node with the type ``namespace`` is a pure Linux network namespace. It does
+not create a Docker container, so it is much lighter than a Docker node and is
+useful for large topologies where only L2/L3 forwarding or traffic shaping is
+needed.
+
+The node shares the host filesystem and process namespace. Commands and consoles
+therefore run on the host filesystem inside the node network namespace, and the
+``copy`` command copies files on the host filesystem. Docker-specific options
+(``image``, ``volumes``) and routing options (``mpls``, ``vrfs``, ``vrrps``) are
+rejected; the ``ipv6`` option is accepted but has no effect.
+
+Stopping a namespace node keeps its network namespace and interfaces so that it
+can be started again without recreating the links. The namespace is removed when
+the node or the project is closed.
+
+Example of namespace nodes
+""""""""""""""""""""""""""
+
+.. code-block:: yaml
+
+    nodes:
+      ns1:
+        type: namespace
+      ns2:
+        type: namespace
+        mgnt:
+          enable: yes
+          address: 192.168.0.2/24
+    links:
+    - peer1: ns1.0
+      peer2: ns2.0
 
 Links
 -----

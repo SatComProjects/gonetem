@@ -31,14 +31,19 @@ type VrrpOptions struct {
 }
 
 type DockerNodeOptions struct {
-	Name      string
-	ShortName string
-	Ipv6      bool
-	Mpls      bool
-	Vrfs      []string
-	Vrrps     []VrrpOptions
-	Volumes   []string
-	Image     string
+	Name       string
+	ShortName  string
+	Ipv6       bool
+	Mpls       bool
+	Vrfs       []string
+	Vrrps      []VrrpOptions
+	Volumes    []string
+	Image      string
+	LazyCreate bool
+}
+
+func vrrpInterfaceName(ifIndex, group int) string {
+	return fmt.Sprintf("vrrp-%d-%d", ifIndex, group)
 }
 
 type DockerNodeStatus struct {
@@ -57,10 +62,15 @@ type DockerNode struct {
 	ShortName      string
 	Config         *options.DockerNodeConfig
 	Interfaces     map[string]*DockerInterface
-	mu             sync.Mutex
+	mu             sync.RWMutex
+	nsMu           sync.Mutex
+	configMu       sync.Mutex
 	LocalNetnsName string
 	Running        bool
 	ConfigLoaded   bool
+	ImageName      string
+	IPv6           bool
+	LazyCreate     bool
 	Mpls           bool
 	Vrfs           []string
 	Vrrps          []VrrpOptions
@@ -88,6 +98,10 @@ func (n *DockerNode) GetFullType() string {
 }
 
 func (n *DockerNode) GetStatus() (DockerNodeStatus, error) {
+	if n.ID == "" {
+		return DockerNodeStatus{Running: false}, nil
+	}
+
 	client, err := NewDockerClient()
 	if err != nil {
 		return DockerNodeStatus{}, err
@@ -105,6 +119,8 @@ func (n *DockerNode) GetStatus() (DockerNodeStatus, error) {
 }
 
 func (n *DockerNode) IsRunning() bool {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
 	return n.Running
 }
 
@@ -135,7 +151,7 @@ func (n *DockerNode) Create(imgName string, ipv6 bool) error {
 }
 
 func (n *DockerNode) GetNetns() (netns.NsHandle, error) {
-	if n.Running {
+	if n.IsRunning() {
 		return n.GetRunningNetns()
 	}
 
@@ -143,10 +159,9 @@ func (n *DockerNode) GetNetns() (netns.NsHandle, error) {
 }
 
 func (n *DockerNode) GetRunningNetns() (netns.NsHandle, error) {
-	if !n.Running {
-		return netns.NsHandle(0), fmt.Errorf("node %s Not running", n.GetName())
-	}
-
+	// Rely on Docker's actual state instead of the cached Running flag. This
+	// lets Start() obtain the container namespace before marking the node as
+	// running, while Pid() still rejects stopped containers.
 	client, err := NewDockerClient()
 	if err != nil {
 		return netns.NsHandle(0), err
@@ -161,15 +176,18 @@ func (n *DockerNode) GetRunningNetns() (netns.NsHandle, error) {
 }
 
 func (n *DockerNode) GetLocalNetns() (netns.NsHandle, error) {
+	n.nsMu.Lock()
+	defer n.nsMu.Unlock()
+
 	if n.LocalNetnsName == "" {
 		// first created local named ns to detach interface without delete it
-		n.LocalNetnsName = fmt.Sprintf("%s%s", n.PrjID, n.Name)
-		ns, err := link.CreateNetns(n.LocalNetnsName)
+		name := fmt.Sprintf("%s%s", n.PrjID, n.Name)
+		ns, err := link.CreateNetns(name)
 		if err != nil {
-			n.LocalNetnsName = ""
 			return netns.NsHandle(0),
-				fmt.Errorf("error when creating node netns '%s': %v", n.LocalNetnsName, err)
+				fmt.Errorf("error when creating node netns '%s': %v", name, err)
 		}
+		n.LocalNetnsName = name
 
 		return ns, nil
 	}
@@ -186,27 +204,45 @@ func (n *DockerNode) GetInterfaceName(ifIndex int) string {
 	return fmt.Sprintf("eth%d", ifIndex)
 }
 
-func (n *DockerNode) prepareInterface(client *DockerClient, ifName string) {
-	var cmd []string
+func interfacePreparationScript(ifNames []string, disableTso, enableMpls bool) (string, bool) {
+	lines := []string{"rc=0"}
+	hasWork := false
 
-	if !strings.HasPrefix(ifName, "eth") {
-		return // not applicable to mgnt interface
-	}
-
-	if !n.Config.Options.Tso {
-		// disable tcp offloading
-		cmd = []string{"ethtool", "-K", ifName, "tx", "off"}
-		if _, err := client.Exec(context.Background(), n.ID, cmd); err != nil {
-			n.Logger.Warnf("Unable to disable tcp offloading on %s", ifName)
+	for _, ifName := range ifNames {
+		if !strings.HasPrefix(ifName, "eth") {
+			continue // not applicable to management interface
+		}
+		if disableTso {
+			hasWork = true
+			lines = append(lines, fmt.Sprintf(
+				"ethtool -K %s tx off || { echo 'ethtool failed on %s'; rc=1; }",
+				ifName, ifName,
+			))
+		}
+		if enableMpls {
+			hasWork = true
+			lines = append(lines, fmt.Sprintf(
+				"sysctl -w net.mpls.conf.%s.input=1 || { echo 'sysctl failed on %s'; rc=1; }",
+				ifName, ifName,
+			))
 		}
 	}
 
-	// enable MPLS forwarding
-	if n.Mpls {
-		cmd = []string{"sysctl", "-w", "net.mpls.conf." + ifName + ".input=1"}
-		if _, err := client.Exec(context.Background(), n.ID, cmd); err != nil {
-			n.Logger.Warnf("Unable to enable MPLS on %s", ifName)
-		}
+	if !hasWork {
+		return "", false
+	}
+	lines = append(lines, "exit $rc")
+	return strings.Join(lines, "\n"), true
+}
+
+func (n *DockerNode) prepareInterfaces(client *DockerClient, ifNames []string) {
+	script, ok := interfacePreparationScript(ifNames, !n.Config.Options.Tso, n.Mpls)
+	if !ok {
+		return
+	}
+
+	if _, err := client.Exec(context.Background(), n.ID, []string{"sh", "-c", script}); err != nil {
+		n.Logger.Warnf("Unable to prepare interfaces %v: %v", ifNames, err)
 	}
 }
 
@@ -219,48 +255,74 @@ func (n *DockerNode) AttachInterface(ifName string, ifIndex int, configure bool)
 	n.Interfaces[ifName] = iface
 	n.mu.Unlock()
 
-	if configure && n.Running {
+	if configure && n.IsRunning() {
 		client, err := NewDockerClient()
 		if err != nil {
-			return nil
+			return err
 		}
 		defer client.Close()
 
-		n.prepareInterface(client, ifName)
-		iface.Configured = true
+		n.prepareInterfaces(client, []string{ifName})
+
+		n.mu.Lock()
+		if st := n.Interfaces[ifName]; st != nil {
+			st.Configured = true
+		}
+		n.mu.Unlock()
 	}
 
 	return nil
 }
 
+func (n *DockerNode) DetachInterface(ifName string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.Interfaces, ifName)
+	return nil
+}
+
 func (n *DockerNode) ConfigureInterfaces() error {
-	if !n.Running {
+	if !n.IsRunning() {
 		return nil
 	}
 
 	client, err := NewDockerClient()
 	if err != nil {
-		return nil
+		return err
 	}
 	defer client.Close()
 
+	n.mu.Lock()
+	pending := make([]string, 0)
 	for ifName, st := range n.Interfaces {
-		if st.Configured {
-			continue
+		if !st.Configured {
+			pending = append(pending, ifName)
 		}
+	}
+	n.mu.Unlock()
 
-		n.prepareInterface(client, ifName)
-		n.Interfaces[ifName].Configured = true
+	if len(pending) > 0 {
+		n.prepareInterfaces(client, pending)
+
+		n.mu.Lock()
+		for _, ifName := range pending {
+			if st := n.Interfaces[ifName]; st != nil {
+				st.Configured = true
+			}
+		}
+		n.mu.Unlock()
 	}
 
 	return nil
 }
 
 func (n *DockerNode) AttachMgntInterface(ifName string, ns netns.NsHandle, IPAddress string) error {
+	n.mu.Lock()
 	n.Interfaces[ifName] = &DockerInterface{
 		Configured: true,
 		State:      link.IFSTATE_UP,
 	}
+	n.mu.Unlock()
 
 	// Set IP address
 	if err := link.IpAddressAdd(ifName, ns, IPAddress); err != nil {
@@ -270,8 +332,8 @@ func (n *DockerNode) AttachMgntInterface(ifName string, ns netns.NsHandle, IPAdd
 	return nil
 }
 
-func (n *DockerNode) Capture(ifIndex int, out io.Writer) error {
-	if !n.Running {
+func (n *DockerNode) Capture(ctx context.Context, ifIndex int, out io.Writer) error {
+	if !n.IsRunning() {
 		return errors.New("not running")
 	}
 
@@ -283,10 +345,11 @@ func (n *DockerNode) Capture(ifIndex int, out io.Writer) error {
 
 	ifName := n.GetInterfaceName(ifIndex)
 	cmd := []string{"tcpdump", "-w", "-", "-s", "0", "-U", "-i", ifName}
-	return client.ExecOutStream(context.Background(), n.ID, cmd, out)
+	return client.ExecOutStream(ctx, n.ID, cmd, out)
 }
 
 func (n *DockerNode) ExecCommand(
+	ctx context.Context,
 	cmd []string,
 	in io.ReadCloser,
 	out io.Writer,
@@ -294,7 +357,7 @@ func (n *DockerNode) ExecCommand(
 	ttyHeight uint,
 	ttyWidth uint,
 	resizeCh chan term.Winsize) error {
-	if !n.Running {
+	if !n.IsRunning() {
 		return errors.New("not running")
 	}
 
@@ -305,7 +368,7 @@ func (n *DockerNode) ExecCommand(
 	defer client.Close()
 
 	return client.ExecTty(
-		context.Background(),
+		ctx,
 		n.ID,
 		cmd, in, out,
 		tty, ttyHeight, ttyWidth,
@@ -313,7 +376,7 @@ func (n *DockerNode) ExecCommand(
 }
 
 func (n *DockerNode) RunCommand(cmd []string) ([]byte, []byte, int, error) {
-	if !n.Running {
+	if !n.IsRunning() {
 		return nil, nil, -1, errors.New("not running")
 	}
 
@@ -361,97 +424,183 @@ func (n *DockerNode) GetConsoleCmd(shell bool) ([]string, error) {
 }
 
 func (n *DockerNode) Start() error {
-	if !n.Running {
-		n.Logger.Debug("Start Node")
+	if n.IsRunning() {
+		return nil
+	}
 
-		client, err := NewDockerClient()
+	n.Logger.Debug("Start Node")
+	startAll := time.Now()
+
+	if n.ID == "" {
+		if err := n.Create(n.ImageName, n.IPv6); err != nil {
+			return fmt.Errorf("unable to create container for node %s: %w", n.Name, err)
+		}
+	}
+
+	client, err := NewDockerClient()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+	if err := client.Start(ctx, n.ID); err != nil {
+		return err
+	}
+	n.Logger.Debugf("Start: docker start took %s", time.Since(startAll))
+
+	started := false
+	var currentNS, targetNS netns.NsHandle
+	var ifStates map[string]link.IfState
+
+	defer func() {
+		if !started {
+			if targetNS != 0 && currentNS != 0 {
+				if err := link.MoveInterfacesNetns(ifStates, targetNS, currentNS); err != nil {
+					n.Logger.Warnf("unable to roll back interface move after start failure: %v", err)
+				}
+			}
+			if err := client.Stop(ctx, n.ID); err != nil {
+				n.Logger.Warnf("unable to stop container after start failure: %v", err)
+			}
+			n.mu.Lock()
+			n.Running = false
+			n.mu.Unlock()
+		}
+
+		if targetNS != 0 {
+			targetNS.Close()
+		}
+		if currentNS != 0 {
+			currentNS.Close()
+		}
+	}()
+
+	ifStates = n.GetInterfacesState()
+	allIfNames := make([]string, 0, len(ifStates))
+	n.mu.RLock()
+	pendingIfNames := make([]string, 0, len(ifStates))
+	for ifName := range ifStates {
+		allIfNames = append(allIfNames, ifName)
+		if st := n.Interfaces[ifName]; st == nil || !st.Configured {
+			pendingIfNames = append(pendingIfNames, ifName)
+		}
+	}
+	n.mu.RUnlock()
+
+	if len(allIfNames) > 0 {
+		// Attach existing interfaces. Isolated nodes do not need a local
+		// namespace or any namespace switching during start/stop.
+		currentNS, err = n.GetLocalNetns()
 		if err != nil {
 			return err
 		}
-		defer client.Close()
 
-		ctx := context.Background()
-		if err := client.Start(ctx, n.ID); err != nil {
-			return err
-		}
-		n.Running = true
-
-		// Attach existing interfaces
-		currentNS, err := n.GetLocalNetns()
+		targetNS, err = n.GetRunningNetns()
 		if err != nil {
 			return err
 		}
-		defer currentNS.Close()
 
-		targetNS, err := n.GetRunningNetns()
-		if err != nil {
-			return err
-		}
-		defer targetNS.Close()
-
-		ifStates := n.GetInterfacesState()
+		moveStart := time.Now()
 		if err := link.MoveInterfacesNetns(ifStates, currentNS, targetNS); err != nil {
 			return fmt.Errorf("unable to attach interfaces: %v", err)
 		}
+		n.Logger.Debugf("Start: interface move took %s", time.Since(moveStart))
 
-		// Configure interfaces
-		for ifName := range n.Interfaces {
-			n.prepareInterface(client, ifName)
+		if len(pendingIfNames) > 0 {
+			prepareStart := time.Now()
+			n.prepareInterfaces(client, pendingIfNames)
+			n.Logger.Debugf("Start: interface prepare took %s", time.Since(prepareStart))
 		}
 	}
+
+	n.mu.Lock()
+	for _, ifName := range pendingIfNames {
+		if st := n.Interfaces[ifName]; st != nil {
+			st.Configured = true
+		}
+	}
+	n.Running = true
+	n.ConfigLoaded = false
+	n.mu.Unlock()
+	started = true
+	n.Logger.Debugf("Start: total took %s", time.Since(startAll))
 
 	return nil
 }
 
 func (n *DockerNode) Stop() error {
-	if n.Running {
-		n.Logger.Debug("Stop Node")
+	if !n.IsRunning() {
+		return nil
+	}
 
-		client, err := NewDockerClient()
-		if err != nil {
-			return err
-		}
-		defer client.Close()
+	n.Logger.Debug("Stop Node")
 
-		// Detach interfaces
-		currentNS, err := n.GetRunningNetns()
+	client, err := NewDockerClient()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	// Detach interfaces when the node has any.
+	ifStates := n.GetInterfacesState()
+	var currentNS, targetNS netns.NsHandle
+	if len(ifStates) > 0 {
+		currentNS, err = n.GetRunningNetns()
 		if err != nil {
 			return err
 		}
 		defer currentNS.Close()
 
-		targetNS, err := n.GetLocalNetns()
+		targetNS, err = n.GetLocalNetns()
 		if err != nil {
 			return err
 		}
 		defer targetNS.Close()
 
-		ifStates := n.GetInterfacesState()
 		if err := link.MoveInterfacesNetns(ifStates, currentNS, targetNS); err != nil {
 			return fmt.Errorf("unable to attach interfaces: %v", err)
 		}
-
-		ctx := context.Background()
-		if err := client.Stop(ctx, n.ID); err != nil {
-			return err
-		}
-		n.Running = false
-		n.ConfigLoaded = false
 	}
+
+	ctx := context.Background()
+	if err := client.Stop(ctx, n.ID); err != nil {
+		if currentNS != 0 && targetNS != 0 {
+			if rollbackErr := link.MoveInterfacesNetns(ifStates, targetNS, currentNS); rollbackErr != nil {
+				n.Logger.Errorf("unable to roll back interface move after stop failure: %v", rollbackErr)
+			}
+		}
+		return err
+	}
+
+	n.mu.Lock()
+	n.Running = false
+	n.ConfigLoaded = false
+	n.mu.Unlock()
 
 	return nil
 }
 
 func (n *DockerNode) LoadConfig(confPath string, timeout int) ([]string, error) {
+	n.configMu.Lock()
+	defer n.configMu.Unlock()
+
 	var messages []string
 
-	if !n.Running {
+	if !n.IsRunning() {
 		n.Logger.Info("LoadConfig: node not running")
 		return messages, nil
 	}
 
-	if !n.ConfigLoaded {
-		ns, _ := n.GetRunningNetns()
+	n.mu.RLock()
+	configLoaded := n.ConfigLoaded
+	n.mu.RUnlock()
+
+	if !configLoaded {
+		ns, err := n.GetRunningNetns()
+		if err != nil {
+			return messages, fmt.Errorf("unable to get netns of node %s: %w", n.Name, err)
+		}
 		defer ns.Close()
 
 		// create vrfs
@@ -480,13 +629,15 @@ func (n *DockerNode) LoadConfig(confPath string, timeout int) ([]string, error) 
 
 		// create vrrps interfaces
 		for _, vrrpGroup := range n.Vrrps {
-			name := fmt.Sprintf("vrrp-%d", vrrpGroup.Interface)
+			name := vrrpInterfaceName(vrrpGroup.Interface, vrrpGroup.Group)
 			if _, err := link.CreateVRRPMacVlan(
 				name, fmt.Sprintf("eth%d", vrrpGroup.Interface),
 				vrrpGroup.Group, ns); err != nil {
 				return messages, err
 			}
-			link.SetInterfaceState(name, ns, link.IFSTATE_UP)
+			if err := link.SetInterfaceState(name, ns, link.IFSTATE_UP); err != nil {
+				return messages, fmt.Errorf("unable to set VRRP interface %s up: %w", name, err)
+			}
 
 			// set ip address
 			if _, err := client.Exec(ctx, n.ID, []string{"ip", "addr", "add", vrrpGroup.Address, "dev", name}); err != nil {
@@ -557,7 +708,9 @@ func (n *DockerNode) LoadConfig(confPath string, timeout int) ([]string, error) 
 			}
 		}
 
+		n.mu.Lock()
 		n.ConfigLoaded = true
+		n.mu.Unlock()
 	}
 
 	return messages, nil
@@ -572,20 +725,24 @@ func (n *DockerNode) ReadConfigFiles(confDir string, timeout int) (map[string][]
 	}
 	defer client.Close()
 
+	n.mu.RLock()
+	running := n.Running
+	configLoaded := n.ConfigLoaded
+	n.mu.RUnlock()
+
 	filesDir := confDir
-	if n.Running || n.ConfigLoaded {
+	if running || configLoaded {
 		// create temp directory for the project
 		dir, err := os.MkdirTemp(options.ServerConfig.Workdir, "gonetem-config-node"+n.Name+"-")
 		if err != nil {
 			return nil, fmt.Errorf("unable to create temp folder to save node config: %w", err)
 		}
+		defer os.RemoveAll(dir)
 
 		if err := n.Save(dir, timeout); err != nil {
 			return nil, fmt.Errorf("unable to save node configs in temp folder %s: %w", dir, err)
 		}
 		filesDir = dir
-
-		defer os.RemoveAll(dir)
 	}
 
 	for _, confFileOpts := range n.Config.ConfigurationFiles {
@@ -606,7 +763,12 @@ func (n *DockerNode) ReadConfigFiles(confDir string, timeout int) (map[string][]
 }
 
 func (n *DockerNode) Save(dstPath string, timeout int) error {
-	if !n.Running || !n.ConfigLoaded {
+	n.mu.RLock()
+	running := n.Running
+	configLoaded := n.ConfigLoaded
+	n.mu.RUnlock()
+
+	if !running || !configLoaded {
 		n.Logger.Info("Save: node not running")
 		return nil
 	}
@@ -701,8 +863,10 @@ func (n *DockerNode) CopyTo(source, dest string) error {
 }
 
 func (n *DockerNode) GetInterfacesState() map[string]link.IfState {
-	ifStates := make(map[string]link.IfState)
+	n.mu.RLock()
+	defer n.mu.RUnlock()
 
+	ifStates := make(map[string]link.IfState, len(n.Interfaces))
 	for ifName, st := range n.Interfaces {
 		ifStates[ifName] = st.State
 	}
@@ -711,33 +875,39 @@ func (n *DockerNode) GetInterfacesState() map[string]link.IfState {
 }
 
 func (n *DockerNode) SetInterfaceState(ifIndex int, state link.IfState) error {
-	for ifName, st := range n.Interfaces {
-		if ifName == n.GetInterfaceName(ifIndex) {
-			if state != st.State {
-				ns, err := n.GetNetns()
-				if err != nil {
-					return err
-				}
-				defer ns.Close()
+	ifName := n.GetInterfaceName(ifIndex)
 
-				if err := link.SetInterfaceState(n.GetInterfaceName(ifIndex), ns, state); err != nil {
-					return err
-				}
-				n.Interfaces[ifName] = &DockerInterface{
-					Configured: st.Configured,
-					State:      state,
-				}
-				return nil
-			}
-			return nil
-		}
+	n.mu.RLock()
+	st, found := n.Interfaces[ifName]
+	n.mu.RUnlock()
+	if !found {
+		return fmt.Errorf("interface %s.%d not found", n.GetName(), ifIndex)
+	}
+	if state == st.State {
+		return nil
 	}
 
-	return fmt.Errorf("interface %s.%d not found", n.GetName(), ifIndex)
+	ns, err := n.GetNetns()
+	if err != nil {
+		return err
+	}
+	defer ns.Close()
+
+	if err := link.SetInterfaceState(ifName, ns, state); err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	if current := n.Interfaces[ifName]; current != nil {
+		current.State = state
+	}
+	n.mu.Unlock()
+
+	return nil
 }
 
 func (n *DockerNode) Kill() error {
-	if n.ID != "" && n.Running {
+	if n.ID != "" && n.IsRunning() {
 		n.Logger.Info("Kill: starting")
 		start := time.Now()
 
@@ -751,48 +921,46 @@ func (n *DockerNode) Kill() error {
 		if err := client.Stop(ctx, n.ID); err != nil {
 			return err
 		}
+		n.mu.Lock()
 		n.Running = false
+		n.mu.Unlock()
 		n.Logger.Infof("Kill: done in %s", time.Since(start))
 	}
 	return nil
 }
 
 func (n *DockerNode) Close() error {
-	if n.ID != "" {
-		n.Logger.Info("Close: starting")
-		start := time.Now()
+	n.Logger.Info("Close: starting")
+	start := time.Now()
 
+	if n.ID != "" {
 		client, err := NewDockerClient()
 		if err != nil {
 			return err
 		}
 		defer client.Close()
 
-		ctx := context.Background()
-		if n.Running {
-			n.Logger.Info("Close: stopping container (was not killed)")
-			stopStart := time.Now()
-			client.Stop(ctx, n.ID)
-			n.Running = false
-			n.Logger.Infof("Close: stop done in %s", time.Since(stopStart))
-		}
-
-		n.Logger.Info("Close: removing container")
-		rmStart := time.Now()
-		if err := client.Rm(ctx, n.ID); err != nil {
+		// Force removal also stops a running container. Deleting the container
+		// destroys its netns, so there is no need for a separate kill phase.
+		if err := client.Rm(context.Background(), n.ID); err != nil {
 			return err
 		}
-		n.Logger.Infof("Close: Rm done in %s", time.Since(rmStart))
-
-		n.ConfigLoaded = false
-		n.Interfaces = make(map[string]*DockerInterface)
-		if n.LocalNetnsName != "" {
-			link.DeleteNetns(n.LocalNetnsName)
-			n.LocalNetnsName = ""
-		}
-		n.Logger.Infof("Close: total done in %s", time.Since(start))
 	}
 
+	n.mu.Lock()
+	n.Running = false
+	n.ConfigLoaded = false
+	n.Interfaces = make(map[string]*DockerInterface)
+	n.mu.Unlock()
+
+	n.nsMu.Lock()
+	if n.LocalNetnsName != "" {
+		link.DeleteNetns(n.LocalNetnsName)
+		n.LocalNetnsName = ""
+	}
+	n.nsMu.Unlock()
+
+	n.Logger.Infof("Close: total done in %s", time.Since(start))
 	return nil
 }
 
@@ -843,8 +1011,14 @@ func NewDockerNode(prjID string, nType string, dockerOpts DockerNodeOptions) (*D
 	if dockerOpts.Image != "" {
 		imgName = options.GetDockerImageId(dockerOpts.Image)
 	}
-	if err := node.Create(imgName, dockerOpts.Ipv6); err != nil {
-		return node, err
+	node.ImageName = imgName
+	node.IPv6 = dockerOpts.Ipv6
+	node.LazyCreate = dockerOpts.LazyCreate
+
+	if !node.LazyCreate {
+		if err := node.Create(imgName, dockerOpts.Ipv6); err != nil {
+			return node, err
+		}
 	}
 	return node, nil
 }

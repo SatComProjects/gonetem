@@ -133,14 +133,35 @@ func (s *netemServer) ServerCleanContainers(ctx context.Context, empty *empty.Em
 	}, nil
 }
 
-func (s *netemServer) ServerPullImages(empty *empty.Empty, stream proto.Netem_ServerPullImagesServer) error {
-	imageTypes := []string{
+func imageTypesForPull() []string {
+	images := []string{
 		options.ServerConfig.Docker.Nodes.Router.Image,
 		options.ServerConfig.Docker.Nodes.Host.Image,
 		options.ServerConfig.Docker.Nodes.Server.Image,
 		options.ServerConfig.Docker.Nodes.P4sw.Image,
 		options.ServerConfig.Docker.OvsImage,
 	}
+	for _, node := range options.ServerConfig.Docker.ExtraNodes {
+		images = append(images, node.Image)
+	}
+
+	seen := make(map[string]struct{}, len(images))
+	result := make([]string, 0, len(images))
+	for _, image := range images {
+		if image == "" {
+			continue
+		}
+		if _, ok := seen[image]; ok {
+			continue
+		}
+		seen[image] = struct{}{}
+		result = append(result, image)
+	}
+	return result
+}
+
+func (s *netemServer) ServerPullImages(empty *empty.Empty, stream proto.Netem_ServerPullImagesServer) error {
+	imageTypes := imageTypesForPull()
 
 	client, err := docker.NewDockerClient()
 	if err != nil {
@@ -246,12 +267,14 @@ func (s *netemServer) ProjectClose(request *proto.ProjectRequest, stream proto.N
 
 				case CLOSE_NODE:
 					stream.Send(&proto.ProjectCloseMsg{
-						Code: proto.ProjectCloseMsg_NODE_CLOSE,
+						Code:  proto.ProjectCloseMsg_NODE_CLOSE,
+						Total: int32(p.Value),
 					})
 
 				case CLOSE_BRIDGE:
 					stream.Send(&proto.ProjectCloseMsg{
-						Code: proto.ProjectCloseMsg_BRIDGE_CLOSE,
+						Code:  proto.ProjectCloseMsg_BRIDGE_CLOSE,
+						Total: int32(p.Value),
 					})
 				}
 			}
@@ -425,6 +448,9 @@ func (s *netemServer) LinkDel(ctx context.Context, request *proto.LinkRequest) (
 	}
 
 	rLink := request.GetLink()
+	if rLink == nil {
+		return nil, fmt.Errorf("link configuration is missing")
+	}
 	linkConfig := LinkConfig{
 		Peer1: rLink.GetPeer1(),
 		Peer2: rLink.GetPeer2(),
@@ -498,19 +524,23 @@ func toppologyRunProgressGoroutine(
 				})
 			case SETUP_LINK:
 				stream.Send(&proto.TopologyRunMsg{
-					Code: proto.TopologyRunMsg_LINK_SETUP,
+					Code:  proto.TopologyRunMsg_LINK_SETUP,
+					Total: int32(p.Value),
 				})
 			case START_NODE:
 				stream.Send(&proto.TopologyRunMsg{
-					Code: proto.TopologyRunMsg_NODE_START,
+					Code:  proto.TopologyRunMsg_NODE_START,
+					Total: int32(p.Value),
 				})
 			case START_BRIDGE:
 				stream.Send(&proto.TopologyRunMsg{
-					Code: proto.TopologyRunMsg_BRIDGE_START,
+					Code:  proto.TopologyRunMsg_BRIDGE_START,
+					Total: int32(p.Value),
 				})
 			case LOADCONFIG_NODE:
 				stream.Send(&proto.TopologyRunMsg{
-					Code: proto.TopologyRunMsg_NODE_LOADCONFIG,
+					Code:  proto.TopologyRunMsg_NODE_LOADCONFIG,
+					Total: int32(p.Value),
 				})
 			}
 		}
@@ -569,6 +599,10 @@ func (s *netemServer) TopologyStartAll(ctx context.Context, request *proto.Proje
 	project := ProjectGetOne(request.GetId())
 	if project == nil {
 		return nil, &ProjectNotFoundError{request.GetId()}
+	}
+
+	if !project.Topology.IsRunning() {
+		return nil, fmt.Errorf("topology is not running; use TopologyRun first")
 	}
 
 	nodes := project.Topology.GetAllNodes()
@@ -709,6 +743,8 @@ func (s *netemServer) NodeSetIfState(ctx context.Context, request *proto.NodeIfS
 		state = link.IFSTATE_DOWN
 	case proto.IfState_UP:
 		state = link.IFSTATE_UP
+	default:
+		return nil, fmt.Errorf("invalid interface state %d", request.GetState())
 	}
 
 	if err := node.SetInterfaceState(int(request.GetIfIndex()), state); err != nil {
@@ -747,10 +783,11 @@ func (s *netemServer) NodeCapture(request *proto.NodeInterfaceRequest, stream pr
 	})
 
 	rOut, wOut := io.Pipe()
-	waitCh := make(chan error)
+	waitCh := make(chan error, 1)
 
 	go func() {
 		defer wOut.Close()
+		defer rOut.Close()
 
 		data := make([]byte, 256)
 		for {
@@ -770,6 +807,7 @@ func (s *netemServer) NodeCapture(request *proto.NodeInterfaceRequest, stream pr
 				Code: proto.CaptureSrvMsg_STDOUT,
 				Data: data[:n],
 			}); err != nil {
+				rOut.CloseWithError(err)
 				waitCh <- err
 				return
 			}
@@ -777,7 +815,7 @@ func (s *netemServer) NodeCapture(request *proto.NodeInterfaceRequest, stream pr
 	}()
 
 	logger.Debugf("Start capture on interface %d", request.IfIndex)
-	if err := node.Capture(int(request.GetIfIndex()), wOut); err != nil {
+	if err := node.Capture(stream.Context(), int(request.GetIfIndex()), wOut); err != nil {
 		stream.Send(&proto.CaptureSrvMsg{
 			Code: proto.CaptureSrvMsg_ERROR,
 			Data: []byte(err.Error()),
@@ -866,11 +904,15 @@ func (s *netemServer) NodeExec(stream proto.Netem_NodeExecServer) error {
 	rIn, wIn := io.Pipe()
 	rOut, wOut := io.Pipe()
 
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+
 	resizeCh := make(chan term.Winsize)
 
 	g := new(errgroup.Group)
 	g.Go(func() error {
 		defer close(resizeCh)
+		defer wIn.Close()
 
 		for {
 			in, err := stream.Recv()
@@ -883,19 +925,28 @@ func (s *netemServer) NodeExec(stream proto.Netem_NodeExecServer) error {
 
 			switch in.GetCode() {
 			case proto.ExecCltMsg_DATA:
-				wIn.Write(in.GetData())
+				if _, err := wIn.Write(in.GetData()); err != nil {
+					return err
+				}
 			case proto.ExecCltMsg_RESIZE:
-				resizeCh <- term.Winsize{
+				select {
+				case resizeCh <- term.Winsize{
 					Width:  uint16(in.GetTtyWidth()),
 					Height: uint16(in.GetTtyHeight()),
+				}:
+				case <-ctx.Done():
+					return ctx.Err()
 				}
 			case proto.ExecCltMsg_CLOSE:
-				// TODO: find a solution to terminate command
+				cancel()
+				return nil
 			}
 		}
 	})
 
 	g.Go(func() error {
+		defer rOut.Close()
+
 		data := make([]byte, 32)
 		for {
 			n, err := rOut.Read(data)
@@ -912,13 +963,14 @@ func (s *netemServer) NodeExec(stream proto.Netem_NodeExecServer) error {
 				Code: proto.ExecSrvMsg_STDOUT,
 				Data: data[:n],
 			}); err != nil {
+				cancel()
 				return err
 			}
 		}
 	})
 
 	err = node.ExecCommand(
-		msg.GetCmd(), rIn, wOut,
+		ctx, msg.GetCmd(), rIn, wOut,
 		msg.GetTty(), uint(msg.GetTtyHeight()), uint(msg.GetTtyWidth()),
 		resizeCh)
 	if err != nil {
@@ -1018,21 +1070,30 @@ func (s *netemServer) NodeCopyFrom(request *proto.CopyMsg, stream proto.Netem_No
 		})
 	}
 
-	// first copy file in a temp path
-	tempPath := path.Join(
-		options.ServerConfig.Workdir,
-		fmt.Sprintf(
-			"%s-%s-%s", request.GetPrjId(), request.GetNode(),
-			path.Base(request.GetNodePath()),
-		),
-	)
+	// first copy the file into a private temp directory
+	tmpDir, err := os.MkdirTemp(options.ServerConfig.Workdir, "gonetem-copy-")
+	if err != nil {
+		return fmt.Errorf("unable to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	fileName := path.Base(request.GetNodePath())
+	if fileName == "." || fileName == "/" || fileName == "" {
+		fileName = "copy"
+	}
+	tempPath := path.Join(tmpDir, fileName)
+
 	if err := node.CopyFrom(request.GetNodePath(), tempPath); err != nil {
 		return err
 	}
-	defer os.Remove(tempPath)
+
+	tempFile, err := os.Open(tempPath)
+	if err != nil {
+		return fmt.Errorf("unable to open copied file %s: %w", tempPath, err)
+	}
+	defer tempFile.Close()
 
 	buffer := make([]byte, 1024)
-	tempFile, _ := os.Open(tempPath)
 	for {
 		n, err := tempFile.Read(buffer)
 		if err == io.EOF {
@@ -1054,21 +1115,43 @@ func (s *netemServer) NodeCopyFrom(request *proto.CopyMsg, stream proto.Netem_No
 }
 
 func (s *netemServer) NodeCopyTo(stream proto.Netem_NodeCopyToServer) error {
-	var tempPath, destPath string
+	var tempDir, tempPath, destPath string
 	var tempFile *os.File
 	var node INetemNode
+
+	defer func() {
+		if tempFile != nil {
+			tempFile.Close()
+		}
+		if tempDir != "" {
+			os.RemoveAll(tempDir)
+		}
+	}()
 
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
-			if tempPath == "" {
+			if tempPath == "" || node == nil {
 				return stream.SendAndClose(&proto.AckResponse{
 					Status: &proto.Status{
 						Code:  proto.StatusCode_ERROR,
-						Error: "Temp file does not exist",
+						Error: "temp file does not exist",
 					},
 				})
 			}
+
+			if tempFile != nil {
+				if err := tempFile.Close(); err != nil {
+					return stream.SendAndClose(&proto.AckResponse{
+						Status: &proto.Status{
+							Code:  proto.StatusCode_ERROR,
+							Error: fmt.Sprintf("unable to close temp file: %v", err),
+						},
+					})
+				}
+				tempFile = nil
+			}
+
 			if err := node.CopyTo(tempPath, destPath); err != nil {
 				return stream.SendAndClose(&proto.AckResponse{
 					Status: &proto.Status{
@@ -1084,54 +1167,81 @@ func (s *netemServer) NodeCopyTo(stream proto.Netem_NodeCopyToServer) error {
 				},
 			})
 		}
+		if err != nil {
+			return err
+		}
 
 		switch msg.Code {
 		case proto.CopyMsg_INIT:
+			if tempFile != nil {
+				return stream.SendAndClose(&proto.AckResponse{
+					Status: &proto.Status{
+						Code:  proto.StatusCode_ERROR,
+						Error: "INIT received twice",
+					},
+				})
+			}
+
 			project := ProjectGetOne(msg.GetPrjId())
 			if project == nil {
 				return stream.SendAndClose(&proto.AckResponse{
 					Status: &proto.Status{
 						Code:  proto.StatusCode_ERROR,
-						Error: "Project not found",
+						Error: "project not found",
 					},
 				})
 			}
 
-			// get node
 			node = project.Topology.GetNode(msg.GetNode())
 			if node == nil {
 				return stream.SendAndClose(&proto.AckResponse{
 					Status: &proto.Status{
 						Code:  proto.StatusCode_ERROR,
-						Error: fmt.Sprintf("Node %s not found", msg.GetNode()),
+						Error: fmt.Sprintf("node %s not found", msg.GetNode()),
 					},
 				})
 			}
 
 			destPath = msg.GetNodePath()
-			tempPath = path.Join(
-				options.ServerConfig.Workdir,
-				fmt.Sprintf(
-					"%s-%s-%s", msg.GetPrjId(), msg.GetNode(),
-					path.Base(msg.GetNodePath()),
-				),
-			)
-			tempFile, err = os.Create(tempPath)
+
+			tempDir, err = os.MkdirTemp(options.ServerConfig.Workdir, "gonetem-copy-")
 			if err != nil {
-				tempPath = ""
+				tempDir = ""
 				return stream.SendAndClose(&proto.AckResponse{
 					Status: &proto.Status{
 						Code:  proto.StatusCode_ERROR,
-						Error: fmt.Sprintf("Unable to create temp file: %v", err),
+						Error: fmt.Sprintf("unable to create temp directory: %v", err),
 					},
 				})
 			}
-			defer tempFile.Close()
-			defer os.Remove(tempPath)
+
+			tempFile, err = os.CreateTemp(tempDir, "upload-")
+			if err != nil {
+				return stream.SendAndClose(&proto.AckResponse{
+					Status: &proto.Status{
+						Code:  proto.StatusCode_ERROR,
+						Error: fmt.Sprintf("unable to create temp file: %v", err),
+					},
+				})
+			}
+			tempPath = tempFile.Name()
 
 		case proto.CopyMsg_DATA:
-			if tempFile != nil {
-				tempFile.Write(msg.GetData())
+			if tempFile == nil {
+				return stream.SendAndClose(&proto.AckResponse{
+					Status: &proto.Status{
+						Code:  proto.StatusCode_ERROR,
+						Error: "DATA received before INIT",
+					},
+				})
+			}
+			if _, err := tempFile.Write(msg.GetData()); err != nil {
+				return stream.SendAndClose(&proto.AckResponse{
+					Status: &proto.Status{
+						Code:  proto.StatusCode_ERROR,
+						Error: fmt.Sprintf("unable to write temp file: %v", err),
+					},
+				})
 			}
 		}
 	}

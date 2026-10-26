@@ -5,14 +5,19 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
+	"strings"
 
 	"google.golang.org/grpc/credentials"
 	"sigs.k8s.io/yaml"
 )
 
+// VERSION is a variable so release builds can override it with:
+//
+//	-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=..."
+var VERSION = "0.7.0"
+
 const (
-	VERSION               = "0.6.0"
+	IMAGE_VERSION         = "0.6.0"
 	NETEM_ID              = "ntm"
 	SERVER_CONFIG_FILE    = "/etc/gonetem/config.yaml"
 	MINIMUM_SERVER_CONFIG = `
@@ -25,6 +30,11 @@ tls:
 workdir: /tmp
 docker:
   timeoutop: 60
+  createConcurrency: 30
+  startConcurrency: 30
+  removeConcurrency: 30
+  configConcurrency: 30
+  linkConcurrency: 30
   nodes:
     router:
       image: mroy31/gonetem-frr
@@ -44,6 +54,11 @@ tls:
 workdir: /tmp
 docker:
   timeoutop: 60
+  createConcurrency: 30
+  startConcurrency: 30
+  removeConcurrency: 30
+  configConcurrency: 30
+  linkConcurrency: 30
   nodes:
     router:
       type: router
@@ -200,8 +215,13 @@ type NetemServerConfig struct {
 	Tls     TLSOptions
 	Workdir string
 	Docker  struct {
-		Timeoutop int
-		Nodes     struct {
+		Timeoutop         int
+		CreateConcurrency int
+		StartConcurrency  int
+		RemoveConcurrency int
+		ConfigConcurrency int
+		LinkConcurrency   int
+		Nodes             struct {
 			Router DockerNodeConfig
 			Host   DockerNodeConfig
 			Server DockerNodeConfig
@@ -237,13 +257,19 @@ func ParseServerConfig(config string) error {
 }
 
 func GetDockerImageId(image string) string {
-	hasTagRE := regexp.MustCompile(`^\S+:[\w\.]+$`)
-
-	if !hasTagRE.MatchString(image) {
-		image = fmt.Sprintf("%s:%s", image, VERSION)
+	// Preserve an existing tag or digest. A colon after the last slash is a
+	// tag; '@' introduces a digest.
+	if strings.Contains(image, "@") {
+		return image
 	}
 
-	return image
+	lastSlash := strings.LastIndex(image, "/")
+	lastColon := strings.LastIndex(image, ":")
+	if lastColon > lastSlash {
+		return image
+	}
+
+	return fmt.Sprintf("%s:%s", image, IMAGE_VERSION)
 }
 
 func LoadServerTLSCredentials() (credentials.TransportCredentials, error) {

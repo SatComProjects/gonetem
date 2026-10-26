@@ -27,6 +27,7 @@ require (
 )
 
 require (
+	github.com/creack/pty v1.1.18
 	github.com/creasty/defaults v1.8.0
 	github.com/elk-language/go-prompt v1.1.5
 	github.com/golang/protobuf v1.5.4

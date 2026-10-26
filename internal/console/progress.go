@@ -32,6 +32,17 @@ func ProgressAbort(bars []ProgressBarT, drop bool) {
 	}
 }
 
+func incrementProgress(bar *mpb.Bar, total int32) {
+	if bar == nil {
+		return
+	}
+	count := int(total)
+	if count <= 0 {
+		count = 1
+	}
+	bar.IncrBy(count)
+}
+
 func ProgressRunHandleMsg(mpBar *mpb.Progress, bars []ProgressBarT, msg *proto.TopologyRunMsg) {
 	switch msg.Code {
 	case proto.TopologyRunMsg_NODE_COUNT:
@@ -76,16 +87,16 @@ func ProgressRunHandleMsg(mpBar *mpb.Progress, bars []ProgressBarT, msg *proto.T
 		}
 
 	case proto.TopologyRunMsg_LINK_SETUP:
-		bars[2].Bar.Increment()
+		incrementProgress(bars[2].Bar, msg.GetTotal())
 
 	case proto.TopologyRunMsg_BRIDGE_START:
-		bars[3].Bar.Increment()
+		incrementProgress(bars[3].Bar, msg.GetTotal())
 
 	case proto.TopologyRunMsg_NODE_START:
-		bars[0].Bar.Increment()
+		incrementProgress(bars[0].Bar, msg.GetTotal())
 
 	case proto.TopologyRunMsg_NODE_LOADCONFIG:
-		bars[1].Bar.Increment()
+		incrementProgress(bars[1].Bar, msg.GetTotal())
 
 	case proto.TopologyRunMsg_NODE_MESSAGES:
 		ProgressForceComplete(bars)
@@ -127,9 +138,9 @@ func ProgressCloseHandleMsg(mpBar *mpb.Progress, bars []ProgressBarT, msg *proto
 		}
 
 	case proto.ProjectCloseMsg_NODE_CLOSE:
-		bars[0].Bar.Increment()
+		incrementProgress(bars[0].Bar, msg.GetTotal())
 
 	case proto.ProjectCloseMsg_BRIDGE_CLOSE:
-		bars[1].Bar.Increment()
+		incrementProgress(bars[1].Bar, msg.GetTotal())
 	}
 }

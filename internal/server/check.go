@@ -14,8 +14,8 @@ import (
 var (
 	nameRE     = regexp.MustCompile(`^\w+$`)
 	switchRE   = regexp.MustCompile(`^\w{1,10}$`)
-	nodeTypeRE = regexp.MustCompile(`^docker\.\w+|ovs$`)
-	peerRE     = regexp.MustCompile(`^\w+.[0-9]+$`)
+	nodeTypeRE = regexp.MustCompile(`^(?:docker\.\w+|ovs|namespace)$`)
+	peerRE     = regexp.MustCompile(`^\w+\.\d+$`)
 	volumeRE   = regexp.MustCompile(`^[^\0]+:[^\0]+$`)
 )
 
@@ -43,13 +43,53 @@ func checkNodeConfig(name string, nConfig NodeConfig, nodes []string) error {
 		}
 	}
 
+	// more check on namespace node
+	if nConfig.Type == "namespace" {
+		if nConfig.Image != "" {
+			return fmt.Errorf("image can not be set on namespace node")
+		}
+		if len(nConfig.Volumes) > 0 {
+			return fmt.Errorf("volumes can not be set on namespace node")
+		}
+		if nConfig.Mpls {
+			return fmt.Errorf("mpls is not supported on namespace node")
+		}
+		if len(nConfig.Vrfs) > 0 {
+			return fmt.Errorf("vrfs are not supported on namespace node")
+		}
+	}
+
+	// check management network configuration
+	if nConfig.Mgnt.Enable {
+		if nConfig.Type == "ovs" {
+			return fmt.Errorf("management network is not supported on ovswitch nodes")
+		}
+		if _, _, err := net.ParseCIDR(nConfig.Mgnt.Address); err != nil {
+			return fmt.Errorf("management address '%s' is not valid: %s", nConfig.Mgnt.Address, err)
+		}
+	}
+
 	// check vrrp configuration
 	if len(nConfig.Vrrps) > 0 {
 		if nConfig.Type != "docker.router" {
 			return fmt.Errorf("vrrp can only be enable on docker.router node")
 		}
 
+		seenGroups := make(map[[2]int]struct{}, len(nConfig.Vrrps))
 		for _, vrrpCnf := range nConfig.Vrrps {
+			if vrrpCnf.Interface < 0 {
+				return fmt.Errorf("vrrp interface must be >= 0")
+			}
+			if vrrpCnf.Group < 1 || vrrpCnf.Group > 255 {
+				return fmt.Errorf("vrrp group must be in [1, 255]")
+			}
+
+			key := [2]int{vrrpCnf.Interface, vrrpCnf.Group}
+			if _, exists := seenGroups[key]; exists {
+				return fmt.Errorf("vrrp group %d is configured twice on interface %d", vrrpCnf.Group, vrrpCnf.Interface)
+			}
+			seenGroups[key] = struct{}{}
+
 			_, _, err := net.ParseCIDR(vrrpCnf.Address)
 			if err != nil {
 				return fmt.Errorf("vrrp address '%s' is not valid: %s", vrrpCnf.Address, err)
@@ -148,6 +188,12 @@ func CheckTopology(filepath string) (*NetemTopology, []error) {
 		nodes = append(nodes, name)
 	}
 
+	if topology.Mgntnet.Enable {
+		if _, _, err := net.ParseCIDR(topology.Mgntnet.Address); err != nil {
+			errors = append(errors, fmt.Errorf("management network address '%s' is not valid: %w", topology.Mgntnet.Address, err))
+		}
+	}
+
 	// check links
 	for _, link := range topology.Links {
 		if err := isPeerValid(nodes, peers, link.Peer1); err != nil {
@@ -165,41 +211,8 @@ func CheckTopology(filepath string) (*NetemTopology, []error) {
 
 		peers = append(peers, link.Peer1, link.Peer2)
 
-		// check netem parameters
-		if link.Delay < 0 {
-			errors = append(errors, fmt.Errorf("link delay must be >= 0 and specified in ms"))
-		}
-		if link.Jitter < 0 {
-			errors = append(errors, fmt.Errorf("link jitter must be >= 0 and specified in ms"))
-		}
-		if link.Loss < 0 {
-			errors = append(errors, fmt.Errorf("link loss must be >= 0 and specified in percent"))
-		}
-		if link.Jitter > 0 && link.Delay == 0 {
-			errors = append(errors, fmt.Errorf("you must set delay with jitter"))
-		}
-		if link.Loss > 100 {
-			errors = append(errors, fmt.Errorf("link loss must be =< 100 and specified in percent"))
-		}
-
-		// check tbf parameters
-		if link.Rate < 0 {
-			errors = append(errors, fmt.Errorf("link rate must be >= 0 and specified in kbps"))
-		}
-		if link.Rate > 0 && link.Delay == 0 {
-			errors = append(errors, fmt.Errorf("delay must be > 0 when Link rate is configured"))
-		}
-		if link.Buffer < 0.0 {
-			errors = append(errors, fmt.Errorf("link buffer must be >= 0 and specified in BDP scale factor"))
-		}
-		if link.Buffer > 0.0 && link.Rate == 0 {
-			errors = append(errors, fmt.Errorf("link rate must be > 0 when Link buffer is configured"))
-		}
-		if link.Burst < 0 {
-			errors = append(errors, fmt.Errorf("link burst must be >= 0 and specified in bytes"))
-		}
-		if link.Burst > 0 && link.Rate == 0 {
-			errors = append(errors, fmt.Errorf("link rate must be > 0 when Link burst is configured"))
+		if err := link.Validate(); err != nil {
+			errors = append(errors, err)
 		}
 	}
 
