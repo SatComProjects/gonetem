@@ -1,11 +1,63 @@
 package server
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 func newTestLink() *NetemLink {
+	return newTestLinkWithPeers("A", "B")
+}
+
+func newTestLinkWithPeers(peer1, peer2 string) *NetemLink {
 	return &NetemLink{
-		Peer1: NetemLinkPeer{Node: &fakeStartNode{name: "A"}, IfIndex: 0},
-		Peer2: NetemLinkPeer{Node: &fakeStartNode{name: "B"}, IfIndex: 0},
+		Peer1: NetemLinkPeer{Node: &fakeStartNode{name: peer1}, IfIndex: 0},
+		Peer2: NetemLinkPeer{Node: &fakeStartNode{name: peer2}, IfIndex: 0},
+	}
+}
+
+func TestLinkUpdateConcurrentDistinctLinks(t *testing.T) {
+	linkAB := newTestLinkWithPeers("A", "B")
+	linkCD := newTestLinkWithPeers("C", "D")
+	manager := &NetemTopologyManager{
+		nodes:   make([]NetemNode, 0),
+		links:   []*NetemLink{linkAB, linkCD},
+		bridges: make([]*NetemBridge, 0),
+	}
+
+	configs := []LinkConfig{
+		{
+			Peer1:    "A.0",
+			Peer2:    "B.0",
+			Peer1QoS: QoSConfig{Delay: 10},
+			Peer2QoS: QoSConfig{Delay: 10},
+		},
+		{
+			Peer1:    "C.0",
+			Peer2:    "D.0",
+			Peer1QoS: QoSConfig{Delay: 20},
+			Peer2QoS: QoSConfig{Delay: 20},
+		},
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		cfg := configs[i%len(configs)]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := manager.LinkUpdate(cfg, false); err != nil {
+				t.Errorf("LinkUpdate failed: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := linkAB.Config.GetPeer1QoS().Delay; got != 10 {
+		t.Fatalf("link AB delay = %d, want 10", got)
+	}
+	if got := linkCD.Config.GetPeer1QoS().Delay; got != 20 {
+		t.Fatalf("link CD delay = %d, want 20", got)
 	}
 }
 

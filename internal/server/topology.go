@@ -329,6 +329,7 @@ type NetemLink struct {
 	HasPeer2Netem bool
 	HasPeer1Tbf   bool
 	HasPeer2Tbf   bool
+	mu            sync.Mutex // serializes updates to the fields above
 }
 
 func netemRequired(q QoSConfig) bool {
@@ -498,7 +499,7 @@ type NetemTopologyManager struct {
 	running     bool
 	logger      *logrus.Entry
 	mu          sync.RWMutex
-	opMu        sync.Mutex
+	opMu        sync.RWMutex
 	syncMu      sync.Mutex
 	lastSynced  []byte
 }
@@ -1401,34 +1402,39 @@ func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
 		return err
 	}
 
-	t.opMu.Lock()
-	defer t.opMu.Unlock()
+	// Non-sync link updates only mutate per-link state and independent kernel
+	// interfaces, so they can run concurrently. Structural operations
+	// (LinkAdd/Del, NodeAdd/Del, Run/Reload) still take the write side.
+	// Sync updates rewrite the topology file, so keep those exclusive.
+	if sync {
+		t.opMu.Lock()
+		defer t.opMu.Unlock()
+	} else {
+		t.opMu.RLock()
+		defer t.opMu.RUnlock()
+	}
 
-	var l *NetemLink
-	var oldPeer1, oldPeer2, newPeer1, newPeer2 QoSConfig
-	var running bool
-
-	err := func() error {
-		t.mu.Lock()
-		defer t.mu.Unlock()
-
-		var err error
-		l, _, err = t.getLinkLocked(linkCfg.Peer1, linkCfg.Peer2)
-		if err != nil {
-			return err
-		}
-
-		oldPeer1 = l.Config.GetPeer1QoS()
-		oldPeer2 = l.Config.GetPeer2QoS()
-		applyLinkUpdateConfig(l, linkCfg)
-		newPeer1 = l.Config.GetPeer1QoS()
-		newPeer2 = l.Config.GetPeer2QoS()
-		running = t.running
-		return nil
-	}()
+	t.mu.RLock()
+	l, _, err := t.getLinkLocked(linkCfg.Peer1, linkCfg.Peer2)
+	t.mu.RUnlock()
 	if err != nil {
 		return err
 	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var oldPeer1, oldPeer2, newPeer1, newPeer2 QoSConfig
+	var running bool
+
+	t.mu.Lock()
+	oldPeer1 = l.Config.GetPeer1QoS()
+	oldPeer2 = l.Config.GetPeer2QoS()
+	applyLinkUpdateConfig(l, linkCfg)
+	newPeer1 = l.Config.GetPeer1QoS()
+	newPeer2 = l.Config.GetPeer2QoS()
+	running = t.running
+	t.mu.Unlock()
 
 	if !running {
 		if sync {
@@ -1816,6 +1822,9 @@ func (t *NetemTopologyManager) stopNode(node INetemNode) error {
 }
 
 func (t *NetemTopologyManager) Start(nodeName string) ([]string, error) {
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+
 	if !t.IsRunning() {
 		return []string{}, fmt.Errorf("topology is not running; start the topology first")
 	}
@@ -1829,6 +1838,9 @@ func (t *NetemTopologyManager) Start(nodeName string) ([]string, error) {
 }
 
 func (t *NetemTopologyManager) Stop(nodeName string) error {
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+
 	if !t.IsRunning() {
 		return fmt.Errorf("topology is not running")
 	}
