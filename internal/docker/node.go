@@ -67,6 +67,7 @@ type DockerNode struct {
 	configMu       sync.Mutex
 	LocalNetnsName string
 	Running        bool
+	pid            int // cached container PID; valid only while Running
 	ConfigLoaded   bool
 	ImageName      string
 	IPv6           bool
@@ -158,17 +159,51 @@ func (n *DockerNode) GetNetns() (netns.NsHandle, error) {
 	return n.GetLocalNetns()
 }
 
+// resolvePid returns the cached container PID, invoking resolve only when no
+// PID is cached. The PID is stable for the lifetime of a running container.
+func (n *DockerNode) resolvePid(resolve func() (int, error)) (int, error) {
+	n.mu.RLock()
+	pid := n.pid
+	n.mu.RUnlock()
+	if pid > 0 {
+		return pid, nil
+	}
+
+	pid, err := resolve()
+	if err != nil {
+		return -1, err
+	}
+
+	n.mu.Lock()
+	if n.pid == 0 {
+		n.pid = pid
+	}
+	n.mu.Unlock()
+	return pid, nil
+}
+
+func (n *DockerNode) runningPid(client *DockerClient) (int, error) {
+	return n.resolvePid(func() (int, error) {
+		return client.Pid(context.Background(), n.ID)
+	})
+}
+
+func (n *DockerNode) invalidatePid() {
+	n.mu.Lock()
+	n.pid = 0
+	n.mu.Unlock()
+}
+
 func (n *DockerNode) GetRunningNetns() (netns.NsHandle, error) {
-	// Rely on Docker's actual state instead of the cached Running flag. This
-	// lets Start() obtain the container namespace before marking the node as
-	// running, while Pid() still rejects stopped containers.
+	// Docker is consulted only on the first call after Start(); Stop(), Kill()
+	// and Close() invalidate the cached PID.
 	client, err := NewDockerClient()
 	if err != nil {
 		return netns.NsHandle(0), err
 	}
 	defer client.Close()
 
-	pid, err := client.Pid(context.Background(), n.ID)
+	pid, err := n.runningPid(client)
 	if err != nil {
 		return netns.NsHandle(0), err
 	}
@@ -386,7 +421,7 @@ func (n *DockerNode) RunCommand(cmd []string) ([]byte, []byte, int, error) {
 	}
 	defer client.Close()
 
-	pid, err := client.Pid(context.Background(), n.ID)
+	pid, err := n.runningPid(client)
 	if err != nil {
 		return nil, nil, -1, err
 	}
@@ -428,6 +463,10 @@ func (n *DockerNode) Start() error {
 		return nil
 	}
 
+	// A stopped container may have left a stale PID behind after an external
+	// kill or a previous failed start.
+	n.invalidatePid()
+
 	n.Logger.Debug("Start Node")
 	startAll := time.Now()
 
@@ -447,6 +486,9 @@ func (n *DockerNode) Start() error {
 	if err := client.Start(ctx, n.ID); err != nil {
 		return err
 	}
+	if _, err := n.runningPid(client); err != nil {
+		return fmt.Errorf("unable to get container pid for node %s: %w", n.Name, err)
+	}
 	n.Logger.Debugf("Start: docker start took %s", time.Since(startAll))
 
 	started := false
@@ -465,6 +507,7 @@ func (n *DockerNode) Start() error {
 			}
 			n.mu.Lock()
 			n.Running = false
+			n.pid = 0
 			n.mu.Unlock()
 		}
 
@@ -575,6 +618,7 @@ func (n *DockerNode) Stop() error {
 
 	n.mu.Lock()
 	n.Running = false
+	n.pid = 0
 	n.ConfigLoaded = false
 	n.mu.Unlock()
 
@@ -923,6 +967,7 @@ func (n *DockerNode) Kill() error {
 		}
 		n.mu.Lock()
 		n.Running = false
+		n.pid = 0
 		n.mu.Unlock()
 		n.Logger.Infof("Kill: done in %s", time.Since(start))
 	}
@@ -949,6 +994,7 @@ func (n *DockerNode) Close() error {
 
 	n.mu.Lock()
 	n.Running = false
+	n.pid = 0
 	n.ConfigLoaded = false
 	n.Interfaces = make(map[string]*DockerInterface)
 	n.mu.Unlock()

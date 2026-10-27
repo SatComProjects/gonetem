@@ -55,6 +55,100 @@ func TestDockerNode_InterfaceMapConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+func TestDockerNode_ResolvePidCachesResult(t *testing.T) {
+	node := &DockerNode{}
+	calls := 0
+	resolver := func() (int, error) {
+		calls++
+		return 4242, nil
+	}
+
+	pid, err := node.resolvePid(resolver)
+	if err != nil {
+		t.Fatalf("first resolvePid returned an error: %v", err)
+	}
+	if pid != 4242 {
+		t.Fatalf("unexpected pid: %d", pid)
+	}
+	if calls != 1 {
+		t.Fatalf("resolver called %d times, want 1", calls)
+	}
+
+	pid, err = node.resolvePid(resolver)
+	if err != nil {
+		t.Fatalf("second resolvePid returned an error: %v", err)
+	}
+	if pid != 4242 {
+		t.Fatalf("unexpected cached pid: %d", pid)
+	}
+	if calls != 1 {
+		t.Fatalf("resolver called %d times after cache hit, want 1", calls)
+	}
+}
+
+func TestDockerNode_InvalidatePid(t *testing.T) {
+	node := &DockerNode{pid: 4242}
+
+	node.invalidatePid()
+
+	if node.pid != 0 {
+		t.Fatalf("pid was not invalidated: %d", node.pid)
+	}
+}
+
+func TestDockerNode_GetRunningNetnsUsesCachedPid(t *testing.T) {
+	// A cached PID must be used without falling back to Docker inspection.
+	// Using the test process PID proves the cached path resolves a namespace
+	// while the node has no container ID.
+	node := &DockerNode{pid: os.Getpid()}
+
+	ns, err := node.GetRunningNetns()
+	if err != nil {
+		t.Fatalf("GetRunningNetns returned an error: %v", err)
+	}
+	defer ns.Close()
+}
+
+func BenchmarkDockerNode_RunCommandPidCache(b *testing.B) {
+	if os.Getuid() != 0 {
+		b.Skip("Benchmark requires root privileges.")
+	}
+
+	options.InitServerConfig()
+	node, err := NewDockerNode(utils.RandString(4), "host", DockerNodeOptions{
+		Name: utils.RandString(6),
+	})
+	if err != nil {
+		b.Fatalf("Unable to create docker node: %v", err)
+	}
+	defer node.Close()
+
+	if err := node.Start(); err != nil {
+		b.Fatalf("Unable to start docker node: %v", err)
+	}
+
+	cmd := []string{"sh", "-c", "true"}
+
+	b.Run("cached_pid", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if _, _, code, err := node.RunCommand(cmd); err != nil || code != 0 {
+				b.Fatalf("RunCommand failed: code=%d err=%v", code, err)
+			}
+		}
+	})
+
+	b.Run("inspect_each_call", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			node.invalidatePid()
+			if _, _, code, err := node.RunCommand(cmd); err != nil || code != 0 {
+				b.Fatalf("RunCommand failed: code=%d err=%v", code, err)
+			}
+		}
+	})
+}
+
 func TestInterfacePreparationScriptBatchesInterfaces(t *testing.T) {
 	script, ok := interfacePreparationScript([]string{"eth0", "eth1", "mgnt"}, true, true)
 	if !ok {
