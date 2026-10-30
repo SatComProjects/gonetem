@@ -195,6 +195,16 @@ func (n *DockerNode) invalidatePid() {
 }
 
 func (n *DockerNode) GetRunningNetns() (netns.NsHandle, error) {
+	// Fast path: the PID is cached for the lifetime of the running container.
+	// Avoid opening a Docker client (and taking its global lock) on every
+	// route installation.
+	n.mu.RLock()
+	pid := n.pid
+	n.mu.RUnlock()
+	if pid > 0 {
+		return netns.GetFromPid(pid)
+	}
+
 	// Docker is consulted only on the first call after Start(); Stop(), Kill()
 	// and Close() invalidate the cached PID.
 	client, err := NewDockerClient()
@@ -203,7 +213,7 @@ func (n *DockerNode) GetRunningNetns() (netns.NsHandle, error) {
 	}
 	defer client.Close()
 
-	pid, err := n.runningPid(client)
+	pid, err = n.runningPid(client)
 	if err != nil {
 		return netns.NsHandle(0), err
 	}

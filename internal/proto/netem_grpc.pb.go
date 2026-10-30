@@ -49,6 +49,7 @@ const (
 	Netem_NodeCopyTo_FullMethodName            = "/netem.Netem/NodeCopyTo"
 	Netem_NodeGetConsoleCmd_FullMethodName     = "/netem.Netem/NodeGetConsoleCmd"
 	Netem_NodeRun_FullMethodName               = "/netem.Netem/NodeRun"
+	Netem_RouteInstall_FullMethodName          = "/netem.Netem/RouteInstall"
 	Netem_NodeExec_FullMethodName              = "/netem.Netem/NodeExec"
 	Netem_LinkUpdate_FullMethodName            = "/netem.Netem/LinkUpdate"
 	Netem_LinkAdd_FullMethodName               = "/netem.Netem/LinkAdd"
@@ -63,6 +64,8 @@ type NetemClient interface {
 	ServerGetVersion(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*VersionResponse, error)
 	ServerPullImages(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PullSrvMsg], error)
 	ServerCleanContainers(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*AckResponse, error)
+	// ServerUpdate pulls the latest version of gonetem, builds it and installs
+	// it on the server. The server must be restarted to use the new version.
 	ServerUpdate(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[UpdateSrvMsg], error)
 	// Project actions
 	ProjectGetMany(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*PrjListResponse, error)
@@ -100,6 +103,9 @@ type NetemClient interface {
 	NodeCopyTo(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[CopyMsg, AckResponse], error)
 	NodeGetConsoleCmd(ctx context.Context, in *ConsoleCmdRequest, opts ...grpc.CallOption) (*ConsoleCmdResponse, error)
 	NodeRun(ctx context.Context, in *NodeRunRequest, opts ...grpc.CallOption) (*NodeRunResponse, error)
+	// RouteInstall applies a batch of route changes to several nodes in one
+	// call. The server executes the batches with a bounded worker pool.
+	RouteInstall(ctx context.Context, in *RouteInstallRequest, opts ...grpc.CallOption) (*RouteInstallResponse, error)
 	NodeExec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecCltMsg, ExecSrvMsg], error)
 	// Link actions
 	LinkUpdate(ctx context.Context, in *LinkRequest, opts ...grpc.CallOption) (*AckResponse, error)
@@ -144,6 +150,16 @@ func (c *netemClient) ServerPullImages(ctx context.Context, in *empty.Empty, opt
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Netem_ServerPullImagesClient = grpc.ServerStreamingClient[PullSrvMsg]
 
+func (c *netemClient) ServerCleanContainers(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*AckResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AckResponse)
+	err := c.cc.Invoke(ctx, Netem_ServerCleanContainers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *netemClient) ServerUpdate(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[UpdateSrvMsg], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[1], Netem_ServerUpdate_FullMethodName, cOpts...)
@@ -162,16 +178,6 @@ func (c *netemClient) ServerUpdate(ctx context.Context, in *empty.Empty, opts ..
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Netem_ServerUpdateClient = grpc.ServerStreamingClient[UpdateSrvMsg]
-
-func (c *netemClient) ServerCleanContainers(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*AckResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(AckResponse)
-	err := c.cc.Invoke(ctx, Netem_ServerCleanContainers_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
 
 func (c *netemClient) ProjectGetMany(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*PrjListResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -480,6 +486,16 @@ func (c *netemClient) NodeRun(ctx context.Context, in *NodeRunRequest, opts ...g
 	return out, nil
 }
 
+func (c *netemClient) RouteInstall(ctx context.Context, in *RouteInstallRequest, opts ...grpc.CallOption) (*RouteInstallResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RouteInstallResponse)
+	err := c.cc.Invoke(ctx, Netem_RouteInstall_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *netemClient) NodeExec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecCltMsg, ExecSrvMsg], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[9], Netem_NodeExec_FullMethodName, cOpts...)
@@ -531,6 +547,8 @@ type NetemServer interface {
 	ServerGetVersion(context.Context, *empty.Empty) (*VersionResponse, error)
 	ServerPullImages(*empty.Empty, grpc.ServerStreamingServer[PullSrvMsg]) error
 	ServerCleanContainers(context.Context, *empty.Empty) (*AckResponse, error)
+	// ServerUpdate pulls the latest version of gonetem, builds it and installs
+	// it on the server. The server must be restarted to use the new version.
 	ServerUpdate(*empty.Empty, grpc.ServerStreamingServer[UpdateSrvMsg]) error
 	// Project actions
 	ProjectGetMany(context.Context, *empty.Empty) (*PrjListResponse, error)
@@ -568,6 +586,9 @@ type NetemServer interface {
 	NodeCopyTo(grpc.ClientStreamingServer[CopyMsg, AckResponse]) error
 	NodeGetConsoleCmd(context.Context, *ConsoleCmdRequest) (*ConsoleCmdResponse, error)
 	NodeRun(context.Context, *NodeRunRequest) (*NodeRunResponse, error)
+	// RouteInstall applies a batch of route changes to several nodes in one
+	// call. The server executes the batches with a bounded worker pool.
+	RouteInstall(context.Context, *RouteInstallRequest) (*RouteInstallResponse, error)
 	NodeExec(grpc.BidiStreamingServer[ExecCltMsg, ExecSrvMsg]) error
 	// Link actions
 	LinkUpdate(context.Context, *LinkRequest) (*AckResponse, error)
@@ -670,6 +691,9 @@ func (UnimplementedNetemServer) NodeGetConsoleCmd(context.Context, *ConsoleCmdRe
 func (UnimplementedNetemServer) NodeRun(context.Context, *NodeRunRequest) (*NodeRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method NodeRun not implemented")
 }
+func (UnimplementedNetemServer) RouteInstall(context.Context, *RouteInstallRequest) (*RouteInstallResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RouteInstall not implemented")
+}
 func (UnimplementedNetemServer) NodeExec(grpc.BidiStreamingServer[ExecCltMsg, ExecSrvMsg]) error {
 	return status.Error(codes.Unimplemented, "method NodeExec not implemented")
 }
@@ -732,17 +756,6 @@ func _Netem_ServerPullImages_Handler(srv interface{}, stream grpc.ServerStream) 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Netem_ServerPullImagesServer = grpc.ServerStreamingServer[PullSrvMsg]
 
-func _Netem_ServerUpdate_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(empty.Empty)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(NetemServer).ServerUpdate(m, &grpc.GenericServerStream[empty.Empty, UpdateSrvMsg]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Netem_ServerUpdateServer = grpc.ServerStreamingServer[UpdateSrvMsg]
-
 func _Netem_ServerCleanContainers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(empty.Empty)
 	if err := dec(in); err != nil {
@@ -760,6 +773,17 @@ func _Netem_ServerCleanContainers_Handler(srv interface{}, ctx context.Context, 
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _Netem_ServerUpdate_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(empty.Empty)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NetemServer).ServerUpdate(m, &grpc.GenericServerStream[empty.Empty, UpdateSrvMsg]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Netem_ServerUpdateServer = grpc.ServerStreamingServer[UpdateSrvMsg]
 
 func _Netem_ProjectGetMany_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(empty.Empty)
@@ -1158,6 +1182,24 @@ func _Netem_NodeRun_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Netem_RouteInstall_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RouteInstallRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NetemServer).RouteInstall(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Netem_RouteInstall_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NetemServer).RouteInstall(ctx, req.(*RouteInstallRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Netem_NodeExec_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(NetemServer).NodeExec(&grpc.GenericServerStream[ExecCltMsg, ExecSrvMsg]{ServerStream: stream})
 }
@@ -1305,6 +1347,10 @@ var Netem_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "NodeRun",
 			Handler:    _Netem_NodeRun_Handler,
+		},
+		{
+			MethodName: "RouteInstall",
+			Handler:    _Netem_RouteInstall_Handler,
 		},
 		{
 			MethodName: "LinkUpdate",

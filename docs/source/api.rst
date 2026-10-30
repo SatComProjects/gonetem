@@ -59,3 +59,42 @@ Request: ``NodeDelRequest``
 Response: ``AckResponse``
 
 All point-to-point links and bridge connections attached to the node are removed, the underlying Docker container or Open vSwitch bridge is deleted, and when ``sync`` is ``true`` the ``network.yml`` file is updated.
+
+RouteInstall
+------------
+
+Apply a batch of route changes to several nodes in one call.
+
+Request: ``RouteInstallRequest``
+
+.. code-block:: protobuf
+
+    message RouteInstallRequest {
+        string prjId = 1;
+        map<string, RouteBatch> nodes = 2;
+        uint32 maxConcurrency = 3; // 0 uses the server configuration
+    }
+
+    message RouteBatch {
+        repeated RouteSpec routes = 1;
+    }
+
+    message RouteSpec {
+        RouteAction action = 1;       // ROUTE_REPLACE or ROUTE_DELETE
+        string destination = 2;       // CIDR, e.g. 10.0.0.0/15
+        string gateway = 3;           // optional for on-link routes
+        string device = 4;            // interface inside the node namespace
+    }
+
+Response: ``RouteInstallResponse``
+
+The server applies route batches inside each node's network namespace using
+netlink, with one bounded worker pool per request. The pool size is
+``docker.routeConcurrency`` (default 32) unless the request asks for a lower
+value. Per-node failures are returned in ``RouteInstallResult.status`` and do
+not abort the other nodes. The RPC is supported on Docker and namespace nodes;
+OVS nodes return an error.
+
+``RouteInstallResult`` also reports the number of applied routes and the
+server-side duration. The older ``NodeRun`` RPC remains available for
+arbitrary commands; clients should use ``RouteInstall`` for route batches.

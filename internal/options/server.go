@@ -14,7 +14,7 @@ import (
 // VERSION is a variable so release builds can override it with:
 //
 //	-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=..."
-var VERSION = "0.7.1"
+var VERSION = "0.8.0"
 
 const (
 	IMAGE_VERSION         = "0.6.0"
@@ -35,6 +35,7 @@ docker:
   removeConcurrency: 30
   configConcurrency: 30
   linkConcurrency: 30
+  routeConcurrency: 32
   nodes:
     router:
       image: mroy31/gonetem-frr
@@ -65,6 +66,7 @@ docker:
   removeConcurrency: 30
   configConcurrency: 30
   linkConcurrency: 30
+  routeConcurrency: 32
   nodes:
     router:
       type: router
@@ -249,6 +251,7 @@ type NetemServerConfig struct {
 		RemoveConcurrency int
 		ConfigConcurrency int
 		LinkConcurrency   int
+		RouteConcurrency  int
 		Nodes             struct {
 			Router DockerNodeConfig
 			Host   DockerNodeConfig
@@ -301,6 +304,9 @@ func ParseServerConfig(config string) error {
 	}
 	if ServerConfig.Update.GoVersion == "" {
 		ServerConfig.Update.GoVersion = defaults.Update.GoVersion
+	}
+	if ServerConfig.Docker.RouteConcurrency == 0 {
+		ServerConfig.Docker.RouteConcurrency = defaults.Docker.RouteConcurrency
 	}
 
 	return nil

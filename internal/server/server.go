@@ -76,6 +76,8 @@ func getNodeConfigFromRequest(request *proto.NodeAddRequest) NodeConfig {
 
 type netemServer struct {
 	proto.UnimplementedNetemServer
+	// routeApplier is injectable for tests. Production uses applyRoutesToNode.
+	routeApplier func(context.Context, INetemNode, []link.RouteSpec) (int, error)
 }
 
 func (s *netemServer) ServerGetVersion(ctx context.Context, empty *empty.Empty) (*proto.VersionResponse, error) {
