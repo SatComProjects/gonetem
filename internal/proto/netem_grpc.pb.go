@@ -52,6 +52,7 @@ const (
 	Netem_RouteInstall_FullMethodName          = "/netem.Netem/RouteInstall"
 	Netem_NodeExec_FullMethodName              = "/netem.Netem/NodeExec"
 	Netem_LinkUpdate_FullMethodName            = "/netem.Netem/LinkUpdate"
+	Netem_LinkUpdateMany_FullMethodName        = "/netem.Netem/LinkUpdateMany"
 	Netem_LinkAdd_FullMethodName               = "/netem.Netem/LinkAdd"
 	Netem_LinkDel_FullMethodName               = "/netem.Netem/LinkDel"
 )
@@ -109,6 +110,9 @@ type NetemClient interface {
 	NodeExec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecCltMsg, ExecSrvMsg], error)
 	// Link actions
 	LinkUpdate(ctx context.Context, in *LinkRequest, opts ...grpc.CallOption) (*AckResponse, error)
+	// LinkUpdateMany applies a batch of link QoS updates in one server-side
+	// operation. The server amortizes the topology lock and namespace switches.
+	LinkUpdateMany(ctx context.Context, in *LinkUpdateManyRequest, opts ...grpc.CallOption) (*LinkUpdateManyResponse, error)
 	LinkAdd(ctx context.Context, in *LinkRequest, opts ...grpc.CallOption) (*AckResponse, error)
 	LinkDel(ctx context.Context, in *LinkRequest, opts ...grpc.CallOption) (*AckResponse, error)
 }
@@ -519,6 +523,16 @@ func (c *netemClient) LinkUpdate(ctx context.Context, in *LinkRequest, opts ...g
 	return out, nil
 }
 
+func (c *netemClient) LinkUpdateMany(ctx context.Context, in *LinkUpdateManyRequest, opts ...grpc.CallOption) (*LinkUpdateManyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LinkUpdateManyResponse)
+	err := c.cc.Invoke(ctx, Netem_LinkUpdateMany_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *netemClient) LinkAdd(ctx context.Context, in *LinkRequest, opts ...grpc.CallOption) (*AckResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AckResponse)
@@ -592,6 +606,9 @@ type NetemServer interface {
 	NodeExec(grpc.BidiStreamingServer[ExecCltMsg, ExecSrvMsg]) error
 	// Link actions
 	LinkUpdate(context.Context, *LinkRequest) (*AckResponse, error)
+	// LinkUpdateMany applies a batch of link QoS updates in one server-side
+	// operation. The server amortizes the topology lock and namespace switches.
+	LinkUpdateMany(context.Context, *LinkUpdateManyRequest) (*LinkUpdateManyResponse, error)
 	LinkAdd(context.Context, *LinkRequest) (*AckResponse, error)
 	LinkDel(context.Context, *LinkRequest) (*AckResponse, error)
 	mustEmbedUnimplementedNetemServer()
@@ -699,6 +716,9 @@ func (UnimplementedNetemServer) NodeExec(grpc.BidiStreamingServer[ExecCltMsg, Ex
 }
 func (UnimplementedNetemServer) LinkUpdate(context.Context, *LinkRequest) (*AckResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method LinkUpdate not implemented")
+}
+func (UnimplementedNetemServer) LinkUpdateMany(context.Context, *LinkUpdateManyRequest) (*LinkUpdateManyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LinkUpdateMany not implemented")
 }
 func (UnimplementedNetemServer) LinkAdd(context.Context, *LinkRequest) (*AckResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method LinkAdd not implemented")
@@ -1225,6 +1245,24 @@ func _Netem_LinkUpdate_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Netem_LinkUpdateMany_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LinkUpdateManyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NetemServer).LinkUpdateMany(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Netem_LinkUpdateMany_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NetemServer).LinkUpdateMany(ctx, req.(*LinkUpdateManyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Netem_LinkAdd_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LinkRequest)
 	if err := dec(in); err != nil {
@@ -1355,6 +1393,10 @@ var Netem_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LinkUpdate",
 			Handler:    _Netem_LinkUpdate_Handler,
+		},
+		{
+			MethodName: "LinkUpdateMany",
+			Handler:    _Netem_LinkUpdateMany_Handler,
 		},
 		{
 			MethodName: "LinkAdd",

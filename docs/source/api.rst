@@ -98,3 +98,27 @@ OVS nodes return an error.
 ``RouteInstallResult`` also reports the number of applied routes and the
 server-side duration. The older ``NodeRun`` RPC remains available for
 arbitrary commands; clients should use ``RouteInstall`` for route batches.
+
+LinkUpdateMany
+--------------
+
+Apply a batch of link QoS updates in one request.
+
+Request: ``LinkUpdateManyRequest``
+
+.. code-block:: protobuf
+
+    message LinkUpdateManyRequest {
+        string prjId = 1;
+        repeated LinkConfig links = 2;
+        bool sync = 3;
+    }
+
+Response: ``LinkUpdateManyResponse``
+
+The server takes the topology write lock once, updates all link configs, groups
+qdisc operations by node, enters each node namespace once, and uses one
+rtnetlink session per node. Per-link failures are returned in
+``LinkUpdateResult.status``; other links are still applied. Results preserve
+request order and include the peer names and server-side duration. With
+``sync`` set, the topology file is written once after the batch.

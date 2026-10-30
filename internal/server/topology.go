@@ -336,9 +336,9 @@ func netemRequired(q QoSConfig) bool {
 	return q.Delay > 0 || q.Jitter > 0 || q.Loss > 0
 }
 
-func applyPeerQoSDiff(ifName string, ns netns.NsHandle, old, next QoSConfig, hasTbf, hasNetem *bool) error {
+func qosDiff(old, next QoSConfig, hasTbf, hasNetem bool) (reset, changeTbf, changeNetem, changed bool) {
 	if old == next {
-		return nil
+		return false, false, false, false
 	}
 
 	oldTbf := old.Rate > 0
@@ -346,11 +346,19 @@ func applyPeerQoSDiff(ifName string, ns netns.NsHandle, old, next QoSConfig, has
 	oldNetem := netemRequired(old)
 	newNetem := netemRequired(next)
 
-	reset := oldTbf != newTbf || oldNetem != newNetem ||
-		*hasTbf != oldTbf || *hasNetem != oldNetem
+	reset = oldTbf != newTbf || oldNetem != newNetem ||
+		hasTbf != oldTbf || hasNetem != oldNetem
 
-	changeTbf := !reset && newTbf
-	changeNetem := !reset && newNetem
+	changeTbf = !reset && newTbf
+	changeNetem = !reset && newNetem
+	return reset, changeTbf, changeNetem, true
+}
+
+func applyPeerQoSDiff(ifName string, ns netns.NsHandle, old, next QoSConfig, hasTbf, hasNetem *bool) error {
+	reset, changeTbf, changeNetem, changed := qosDiff(old, next, *hasTbf, *hasNetem)
+	if !changed {
+		return nil
+	}
 
 	updatedTbf, updatedNetem, err := link.ApplyQoS(
 		ifName, ns, toLinkQoS(next), reset, changeTbf, changeNetem,
@@ -500,8 +508,10 @@ type NetemTopologyManager struct {
 	logger      *logrus.Entry
 	mu          sync.RWMutex
 	opMu        sync.RWMutex
-	syncMu      sync.Mutex
-	lastSynced  []byte
+	// qosBatchApplier is injectable for tests. Production uses link.ApplyQoSBatch.
+	qosBatchApplier func(netns.NsHandle, []link.QoSOperation) ([]link.QoSOperationResult, error)
+	syncMu          sync.Mutex
+	lastSynced      []byte
 }
 
 func (t *NetemTopologyManager) Check() error {

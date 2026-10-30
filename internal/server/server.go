@@ -22,7 +22,10 @@ import (
 )
 
 func getLinkConfigFromRequest(request *proto.LinkRequest) LinkConfig {
-	rLink := request.GetLink()
+	return getLinkConfig(request.GetLink())
+}
+
+func getLinkConfig(rLink *proto.LinkConfig) LinkConfig {
 	p1qos := rLink.GetPeer1Qos()
 	p2qos := rLink.GetPeer2Qos()
 	return LinkConfig{
@@ -476,6 +479,50 @@ func (s *netemServer) LinkUpdate(ctx context.Context, request *proto.LinkRequest
 
 	return &proto.AckResponse{
 		Status: &proto.Status{Code: proto.StatusCode_OK},
+	}, nil
+}
+
+func (s *netemServer) LinkUpdateMany(ctx context.Context, request *proto.LinkUpdateManyRequest) (*proto.LinkUpdateManyResponse, error) {
+	project := ProjectGetOne(request.GetPrjId())
+	if project == nil {
+		return nil, &ProjectNotFoundError{request.GetPrjId()}
+	}
+
+	configs := make([]LinkConfig, 0, len(request.GetLinks()))
+	for idx, rLink := range request.GetLinks() {
+		if rLink == nil {
+			return nil, fmt.Errorf("link configuration %d is missing", idx)
+		}
+		configs = append(configs, getLinkConfig(rLink))
+	}
+
+	outcomes, err := project.Topology.LinkUpdateMany(configs, request.GetSync())
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]*proto.LinkUpdateResult, 0, len(outcomes))
+	updated := uint32(0)
+	for _, outcome := range outcomes {
+		status := &proto.Status{Code: proto.StatusCode_OK}
+		if outcome.Err != nil {
+			status.Code = proto.StatusCode_ERROR
+			status.Error = outcome.Err.Error()
+		} else {
+			updated++
+		}
+		results = append(results, &proto.LinkUpdateResult{
+			Status:         status,
+			Peer1:          outcome.Peer1,
+			Peer2:          outcome.Peer2,
+			DurationMicros: outcome.DurationMicros,
+		})
+	}
+
+	return &proto.LinkUpdateManyResponse{
+		Status:  &proto.Status{Code: proto.StatusCode_OK},
+		Results: results,
+		Updated: updated,
 	}, nil
 }
 
