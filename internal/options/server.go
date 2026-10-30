@@ -43,6 +43,12 @@ docker:
     server:
       image: mroy31/gonetem-server
   extraNodes: []
+update:
+  enabled: false
+  repository: https://github.com/satcomprojects/gonetem
+  branch: master
+  goVersion: "1.24.0"
+  workdir: ""
 `
 	INITIAL_SERVER_CONFIG = `
 listen: "localhost:10110"
@@ -176,6 +182,12 @@ docker:
       configurationFiles:
   extraNodes: []
   ovsImage: mroy31/gonetem-ovs
+update:
+  enabled: false
+  repository: https://github.com/satcomprojects/gonetem
+  branch: master
+  goVersion: "1.24.0"
+  workdir: ""
 `
 )
 
@@ -210,6 +222,22 @@ type DockerNodeConfig struct {
 	Options              DockerNodeOptions
 }
 
+// UpdateConfig configures the self-update of gonetem-server, triggered by
+// the `gonetem-console update` command.
+type UpdateConfig struct {
+	// Enabled must be set to true for the server to accept update requests.
+	Enabled bool
+	// Repository is the git repository cloned to build the new version.
+	Repository string
+	// Branch is the git branch (or tag) checked out in Repository.
+	Branch string
+	// GoVersion is the version of go downloaded to build gonetem.
+	GoVersion string
+	// Workdir is the folder used to clone and build gonetem. If empty, a
+	// temporary directory is used.
+	Workdir string
+}
+
 type NetemServerConfig struct {
 	Listen  string
 	Tls     TLSOptions
@@ -230,6 +258,7 @@ type NetemServerConfig struct {
 		ExtraNodes []DockerNodeConfig
 		OvsImage   string
 	}
+	Update UpdateConfig
 }
 
 var (
@@ -253,7 +282,28 @@ func ParseServerConfig(config string) error {
 		return err
 	}
 
-	return yaml.Unmarshal(data, &ServerConfig)
+	if err := yaml.Unmarshal(data, &ServerConfig); err != nil {
+		return err
+	}
+
+	// The update section is optional: keep the defaults for the keys that
+	// are not defined in the configuration file.
+	defaults := NetemServerConfig{}
+	if err := yaml.Unmarshal([]byte(INITIAL_SERVER_CONFIG), &defaults); err != nil {
+		return err
+	}
+
+	if ServerConfig.Update.Repository == "" {
+		ServerConfig.Update.Repository = defaults.Update.Repository
+	}
+	if ServerConfig.Update.Branch == "" {
+		ServerConfig.Update.Branch = defaults.Update.Branch
+	}
+	if ServerConfig.Update.GoVersion == "" {
+		ServerConfig.Update.GoVersion = defaults.Update.GoVersion
+	}
+
+	return nil
 }
 
 func GetDockerImageId(image string) string {

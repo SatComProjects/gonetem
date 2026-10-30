@@ -39,6 +39,13 @@ Description of available options:
 - ``wordir``: the directory used by the server to store open project folders (with topology/configurations)
 - ``tls.*``: options to enable and confgure a secure gRPC connection betwwen the console and the server. See :ref:`tls` for more detail to secure this connection
 - ``docker.*``: options for docker nodes. See :ref:`nodes` for detail to configure existing nodes and define new one
+- ``update.*``: options used by ``gonetem-console update`` to rebuild and reinstall gonetem on the server:
+
+  - ``enabled``: must be set to ``true`` to allow updates (default to ``false``)
+  - ``repository``: git repository cloned to build gonetem (default to ``https://github.com/satcomprojects/gonetem``)
+  - ``branch``: git branch (or tag) checked out in ``repository`` (default to ``master``)
+  - ``goVersion``: version of go downloaded to build gonetem (default to ``1.24.0``)
+  - ``workdir``: folder used to clone and build gonetem. If empty, a temporary folder is used
 
 
 Pull docker images
@@ -51,6 +58,31 @@ the launch of gonetem-server:
 .. code-block:: bash
 
     $ gonetem-console pull
+
+Update gonetem
+``````````````
+
+``gonetem-server`` can update itself: it pulls the gonetem sources, downloads
+the configured version of go, builds gonetem with ``make build-<arch>`` and
+installs the new binaries in ``/usr/local/bin``. The update is launched from
+the console with:
+
+.. code-block:: bash
+
+    $ gonetem-console update
+
+The update must be enabled in the server configuration file (``update.enabled``).
+It requires ``git``, ``make``, ``systemctl`` and the rights to install gonetem
+(the server runs as root when installed with the systemd service).
+
+At the end of the update, ``gonetem-server`` is restarted with
+``systemctl restart gonetem.service``. The restart is scheduled without
+blocking, because it stops the server process which runs the update. If the
+service cannot be restarted, restart it manually to use the new version.
+
+The ``make install-<arch>`` target is not used: it stops ``gonetem.service``
+(which would kill the server running the update) and overwrites
+``/etc/gonetem/config.yaml``.
 
 Launch server
 `````````````

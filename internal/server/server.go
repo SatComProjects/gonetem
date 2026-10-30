@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"sync"
 
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/moby/term"
@@ -14,6 +15,7 @@ import (
 	"github.com/mroy31/gonetem/internal/link"
 	"github.com/mroy31/gonetem/internal/options"
 	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/mroy31/gonetem/internal/update"
 	"github.com/mroy31/gonetem/internal/utils"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
@@ -192,6 +194,59 @@ func (s *netemServer) ServerPullImages(empty *empty.Empty, stream proto.Netem_Se
 		})
 	}
 
+	return nil
+}
+
+// updateStreamLogger forwards the progress of an update to the client.
+type updateStreamLogger struct {
+	stream proto.Netem_ServerUpdateServer
+}
+
+func (l *updateStreamLogger) Step(step, message string) {
+	l.stream.Send(&proto.UpdateSrvMsg{
+		Code:    proto.UpdateSrvMsg_START,
+		Step:    step,
+		Message: message,
+	})
+}
+
+func (l *updateStreamLogger) Log(step, line string) {
+	l.stream.Send(&proto.UpdateSrvMsg{
+		Code:    proto.UpdateSrvMsg_LOG,
+		Step:    step,
+		Message: line,
+	})
+}
+
+// updateMutex serializes updates: two concurrent updates would build and
+// install gonetem in the same directory.
+var updateMutex sync.Mutex
+
+func (s *netemServer) ServerUpdate(empty *empty.Empty, stream proto.Netem_ServerUpdateServer) error {
+	if !updateMutex.TryLock() {
+		return stream.Send(&proto.UpdateSrvMsg{
+			Code:    proto.UpdateSrvMsg_ERROR,
+			Message: update.ErrBusy.Error(),
+		})
+	}
+	defer updateMutex.Unlock()
+
+	logger := &updateStreamLogger{stream: stream}
+	updater := update.NewUpdater(logger)
+
+	if err := updater.Run(stream.Context()); err != nil {
+		stream.Send(&proto.UpdateSrvMsg{
+			Code:    proto.UpdateSrvMsg_ERROR,
+			Message: err.Error(),
+		})
+		return nil
+	}
+
+	stream.Send(&proto.UpdateSrvMsg{
+		Code:    proto.UpdateSrvMsg_OK,
+		Step:    update.STEP_COMPLETE,
+		Message: "gonetem has been updated, restart gonetem-server to use the new version",
+	})
 	return nil
 }
 

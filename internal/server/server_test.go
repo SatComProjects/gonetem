@@ -84,6 +84,31 @@ func TestServer_Version(t *testing.T) {
 	}
 }
 
+func TestServer_UpdateDisabled(t *testing.T) {
+	options.InitServerConfig()
+	ctx := context.Background()
+
+	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	if err != nil {
+		stdlog.Fatal(err)
+	}
+	defer conn.Close()
+
+	client := proto.NewNetemClient(conn)
+	stream, err := client.ServerUpdate(ctx, &emptypb.Empty{})
+	if err != nil {
+		t.Fatalf("ServerUpdate method return an error: %v", err)
+	}
+
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("unable to read update message: %v", err)
+	}
+	if msg.GetCode() != proto.UpdateSrvMsg_ERROR {
+		t.Errorf("update must be refused when disabled, got %v", msg.GetCode())
+	}
+}
+
 func TestServer_Project(t *testing.T) {
 	options.InitServerConfig()
 	ctx := context.Background()

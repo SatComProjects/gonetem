@@ -50,6 +50,18 @@ To do that, you can use the following command:
 
     $gonetem-console pull
 
+Update
+------
+
+`gonetem-server` can update itself from its git repository. Once enabled in the
+server configuration file (`update.enabled: true`), run:
+
+    $gonetem-console update
+
+The server pulls the configured branch, downloads the configured version of go,
+builds gonetem and installs the new binaries in `/usr/local/bin`. It then
+restarts `gonetem.service` with systemd.
+
 Usage
 -----
 
