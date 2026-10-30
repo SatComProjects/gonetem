@@ -92,7 +92,7 @@ func (o *OvsProjectInstance) GetNetns() (netns.NsHandle, error) {
 	return netns.GetFromPid(pid)
 }
 
-func (o *OvsProjectInstance) Capture(ifName string, out io.Writer) error {
+func (o *OvsProjectInstance) Capture(ctx context.Context, ifName string, out io.Writer) error {
 	if o.state != started {
 		return fmt.Errorf("ovswitch instance not running")
 	}
@@ -104,7 +104,7 @@ func (o *OvsProjectInstance) Capture(ifName string, out io.Writer) error {
 	defer client.Close()
 
 	cmd := []string{"tcpdump", "-w", "-", "-s", "0", "-U", "-i", ifName}
-	return client.ExecOutStream(context.Background(), o.containerId, cmd, out)
+	return client.ExecOutStream(ctx, o.containerId, cmd, out)
 }
 
 func (o *OvsProjectInstance) Exec(cmd []string) error {
@@ -164,6 +164,26 @@ func (o *OvsProjectInstance) DelBr(brName string) error {
 		o.bridges = o.bridges[:len(o.bridges)-1]
 	}
 
+	return nil
+}
+
+func (o *OvsProjectInstance) AddBridgeWithPorts(brName string, ifNames []string) error {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	if o.findBr(brName) != -1 {
+		return fmt.Errorf("switch %s already exists", brName)
+	}
+
+	cmd := []string{"ovs-vsctl", "--may-exist", "add-br", brName}
+	for _, ifName := range ifNames {
+		cmd = append(cmd, "--", "--may-exist", "add-port", brName, ifName)
+	}
+	if err := o.Exec(cmd); err != nil {
+		return err
+	}
+
+	o.bridges = append(o.bridges, brName)
 	return nil
 }
 
@@ -255,12 +275,6 @@ func (o *OvsProjectInstance) Close() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	if o.state == started {
-		if err := client.Stop(ctx, o.containerId); err != nil {
-			return err
-		}
-	}
 
 	if err := client.Rm(ctx, o.containerId); err != nil {
 		return err

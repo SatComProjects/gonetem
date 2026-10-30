@@ -7,3 +7,8 @@ docs/source/_build/*
 *.cnf
 .DS_Store
 TODO.md
+
+# Python test artifacts
+__pycache__/
+.pytest_cache/
+.venv/

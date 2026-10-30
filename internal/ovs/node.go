@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/moby/term"
@@ -28,8 +27,25 @@ type OvsNode struct {
 	Running     bool
 	OvsInstance *OvsProjectInstance
 	Interfaces  map[string]link.IfState
-	mu          sync.Mutex
+	mu          sync.RWMutex
+	instanceMu  sync.Mutex
 	Logger      *logrus.Entry
+}
+
+func (o *OvsNode) ensureInstance() error {
+	o.instanceMu.Lock()
+	defer o.instanceMu.Unlock()
+
+	if o.OvsInstance != nil {
+		return nil
+	}
+
+	instance := GetOvsInstance(o.PrjID)
+	if instance == nil {
+		return fmt.Errorf("ovswitch instance for project %s is not initialized", o.PrjID)
+	}
+	o.OvsInstance = instance
+	return nil
 }
 
 func (s *OvsNode) GetName() string {
@@ -52,10 +68,13 @@ func (s *OvsNode) GetFullType() string {
 }
 
 func (o *OvsNode) IsRunning() bool {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 	return o.Running
 }
 
 func (o *OvsNode) ExecCommand(
+	ctx context.Context,
 	cmd []string,
 	in io.ReadCloser,
 	out io.Writer,
@@ -63,8 +82,11 @@ func (o *OvsNode) ExecCommand(
 	ttyHeight uint,
 	ttyWidth uint,
 	resizeCh chan term.Winsize) error {
-	if !o.Running {
+	if !o.IsRunning() {
 		return errors.New("not running")
+	}
+	if err := o.ensureInstance(); err != nil {
+		return err
 	}
 
 	client, err := docker.NewDockerClient()
@@ -74,7 +96,7 @@ func (o *OvsNode) ExecCommand(
 	defer client.Close()
 
 	return client.ExecTty(
-		context.Background(),
+		ctx,
 		o.OvsInstance.containerId,
 		cmd, in, out,
 		tty, ttyHeight, ttyWidth,
@@ -82,8 +104,11 @@ func (o *OvsNode) ExecCommand(
 }
 
 func (o *OvsNode) RunCommand(cmd []string) ([]byte, []byte, int, error) {
-	if !o.Running {
+	if !o.IsRunning() {
 		return nil, nil, -1, errors.New("not running")
+	}
+	if err := o.ensureInstance(); err != nil {
+		return nil, nil, -1, err
 	}
 
 	client, err := docker.NewDockerClient()
@@ -133,6 +158,9 @@ func (o *OvsNode) CopyTo(srcPath, destPath string) error {
 }
 
 func (o *OvsNode) GetNetns() (netns.NsHandle, error) {
+	if err := o.ensureInstance(); err != nil {
+		return netns.None(), err
+	}
 	return o.OvsInstance.GetNetns()
 }
 
@@ -144,50 +172,70 @@ func (o *OvsNode) GetInterfaceName(ifIndex int) string {
 	return fmt.Sprintf("%s.%d", o.GetBridgeName(), ifIndex)
 }
 
-func (o *OvsNode) Capture(ifIndex int, out io.Writer) error {
-	if !o.Running {
+func (o *OvsNode) Capture(ctx context.Context, ifIndex int, out io.Writer) error {
+	if !o.IsRunning() {
 		return fmt.Errorf("not running")
 	}
+	if err := o.ensureInstance(); err != nil {
+		return err
+	}
 
-	return o.OvsInstance.Capture(o.GetInterfaceName(ifIndex), out)
+	return o.OvsInstance.Capture(ctx, o.GetInterfaceName(ifIndex), out)
 }
 
 func (o *OvsNode) Start() error {
-	if !o.Running {
-		if err := o.OvsInstance.AddBr(o.GetBridgeName()); err != nil {
-			return err
-		}
-		o.Running = true
-
-		for ifName := range o.Interfaces {
-			if err := o.OvsInstance.AddPort(o.GetBridgeName(), ifName); err != nil {
-				return err
-			}
-		}
+	if o.IsRunning() {
+		return nil
 	}
+	if err := o.ensureInstance(); err != nil {
+		return err
+	}
+
+	o.mu.RLock()
+	interfaces := make([]string, 0, len(o.Interfaces))
+	for ifName := range o.Interfaces {
+		interfaces = append(interfaces, ifName)
+	}
+	o.mu.RUnlock()
+
+	if err := o.OvsInstance.AddBridgeWithPorts(o.GetBridgeName(), interfaces); err != nil {
+		_ = o.OvsInstance.DelBr(o.GetBridgeName())
+		return err
+	}
+
+	o.mu.Lock()
+	o.Running = true
+	o.mu.Unlock()
 
 	return nil
 }
 
 func (o *OvsNode) Stop() error {
-	if o.Running {
-		for ifName := range o.Interfaces {
-			if err := o.OvsInstance.DelPort(o.GetBridgeName(), ifName); err != nil {
-				return err
-			}
-		}
-
-		if err := o.OvsInstance.DelBr(o.GetBridgeName()); err != nil {
-			return err
-		}
-		o.Running = false
+	if !o.IsRunning() {
+		return nil
 	}
+	if err := o.ensureInstance(); err != nil {
+		return err
+	}
+
+	// Deleting the bridge removes all of its ports from the OVS database.
+	// Keep the interface map so Start can re-add the ports on restart.
+	if err := o.OvsInstance.DelBr(o.GetBridgeName()); err != nil {
+		return err
+	}
+
+	o.mu.Lock()
+	o.Running = false
+	o.mu.Unlock()
 
 	return nil
 }
 
 func (o *OvsNode) AttachInterface(ifName string, ifIndex int, configure bool) error {
-	if o.Running {
+	if o.IsRunning() {
+		if err := o.ensureInstance(); err != nil {
+			return err
+		}
 		if err := o.OvsInstance.AddPort(o.GetBridgeName(), ifName); err != nil {
 			return err
 		}
@@ -200,6 +248,25 @@ func (o *OvsNode) AttachInterface(ifName string, ifIndex int, configure bool) er
 	return nil
 }
 
+func (o *OvsNode) DetachInterface(ifName string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.Running {
+		if err := o.ensureInstance(); err != nil {
+			return err
+		}
+		// The kernel veth is normally deleted first, so a missing OVS port is
+		// expected. Keep the bookkeeping removal unconditional.
+		if err := o.OvsInstance.DelPort(o.GetBridgeName(), ifName); err != nil {
+			o.Logger.Warnf("unable to delete OVS port %s: %v", ifName, err)
+		}
+	}
+
+	delete(o.Interfaces, ifName)
+	return nil
+}
+
 func (n *OvsNode) ConfigureInterfaces() error {
 	return nil
 }
@@ -209,56 +276,67 @@ func (o *OvsNode) AttachMgntInterface(ifName string, ns netns.NsHandle, IPAddres
 }
 
 func (o *OvsNode) GetInterfacesState() map[string]link.IfState {
-	ifStates := make(map[string]link.IfState, 0)
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	ifStates := make(map[string]link.IfState, len(o.Interfaces))
 	for ifName, state := range o.Interfaces {
-		nArgs := strings.Split(ifName, ".")
-		ifStates[nArgs[len(nArgs)-1]] = state
+		ifStates[ifName] = state
 	}
 
 	return ifStates
 }
 
 func (n *OvsNode) SetInterfaceState(ifIndex int, state link.IfState) error {
-	for ifName, st := range n.Interfaces {
-		if ifName == n.GetInterfaceName(ifIndex) {
-			if state != st {
-				ns, err := n.GetNetns()
-				if err != nil {
-					return err
-				}
-				defer ns.Close()
+	ifName := n.GetInterfaceName(ifIndex)
 
-				if err := link.SetInterfaceState(n.GetInterfaceName(ifIndex), ns, state); err != nil {
-					return err
-				}
-				n.Interfaces[ifName] = state
-				return nil
-			}
-			return nil
-		}
+	n.mu.RLock()
+	current, found := n.Interfaces[ifName]
+	n.mu.RUnlock()
+	if !found {
+		return fmt.Errorf("interface %s.%d not found", n.GetName(), ifIndex)
+	}
+	if state == current {
+		return nil
 	}
 
-	return fmt.Errorf("interface %s.%d not found", n.GetName(), ifIndex)
+	ns, err := n.GetNetns()
+	if err != nil {
+		return err
+	}
+	defer ns.Close()
+
+	if err := link.SetInterfaceState(ifName, ns, state); err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	n.Interfaces[ifName] = state
+	n.mu.Unlock()
+
+	return nil
 }
 
 func (o *OvsNode) ReadConfigFiles(confDir string, timeout int) (map[string][]byte, error) {
 	configFilesData := make(map[string][]byte)
 
 	filesDir := confDir
-	if o.Running {
+	if o.IsRunning() {
+		if err := o.ensureInstance(); err != nil {
+			return nil, err
+		}
 		// create temp directory for the project
 		dir, err := os.MkdirTemp(options.ServerConfig.Workdir, "gonetem-config-sw"+o.Name+"-")
 		if err != nil {
 			return nil, fmt.Errorf("unable to create temp folder to save ovs config: %w", err)
 		}
+		defer os.RemoveAll(dir)
 
 		err = o.OvsInstance.SaveConfig(o.Name, o.GetBridgeName(), dir, timeout)
 		if err != nil {
 			return nil, fmt.Errorf("unable to save ovs config in temp folder %s: %w", dir, err)
 		}
 		filesDir = dir
-
-		defer os.RemoveAll(dir)
 	}
 
 	confpath := path.Join(filesDir, o.Name+".conf")
@@ -277,18 +355,24 @@ func (o *OvsNode) ReadConfigFiles(confDir string, timeout int) (map[string][]byt
 }
 
 func (o *OvsNode) LoadConfig(confPath string, timeout int) ([]string, error) {
-	if !o.Running {
+	if !o.IsRunning() {
 		o.Logger.Warn("LoadConfig: node not running")
 		return []string{}, nil
+	}
+	if err := o.ensureInstance(); err != nil {
+		return []string{}, err
 	}
 
 	return o.OvsInstance.LoadConfig(o.Name, o.GetBridgeName(), confPath, timeout)
 }
 
 func (o *OvsNode) Save(dstPath string, timeout int) error {
-	if !o.Running {
+	if !o.IsRunning() {
 		o.Logger.Warn("Save: node not running")
 		return nil
+	}
+	if err := o.ensureInstance(); err != nil {
+		return err
 	}
 
 	return o.OvsInstance.SaveConfig(o.Name, o.GetBridgeName(), dstPath, timeout)
@@ -318,8 +402,5 @@ func NewOvsNode(prjID, name, shortName string) (*OvsNode, error) {
 	}
 
 	node.OvsInstance = GetOvsInstance(prjID)
-	if node.OvsInstance == nil {
-		return node, fmt.Errorf("ovswitch instance for project %s not found", prjID)
-	}
 	return node, nil
 }

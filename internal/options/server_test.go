@@ -2,6 +2,7 @@ package options
 
 import (
 	"fmt"
+	"os"
 	"testing"
 )
 
@@ -38,19 +39,19 @@ func TestOptions_ImageId(t *testing.T) {
 	}{
 		{
 			imgType:    IMG_HOST,
-			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Host.Image, VERSION),
+			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Host.Image, IMAGE_VERSION),
 		},
 		{
 			imgType:    IMG_SERVER,
-			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Server.Image, VERSION),
+			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Server.Image, IMAGE_VERSION),
 		},
 		{
 			imgType:    IMG_ROUTER,
-			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Router.Image, VERSION),
+			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.Nodes.Router.Image, IMAGE_VERSION),
 		},
 		{
 			imgType:    IMG_OVS,
-			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.OvsImage, VERSION),
+			expectedID: fmt.Sprintf("%s:%s", ServerConfig.Docker.OvsImage, IMAGE_VERSION),
 		},
 	}
 	for _, test := range tests {
@@ -60,8 +61,86 @@ func TestOptions_ImageId(t *testing.T) {
 		}
 	}
 
-	id := GetDockerImageId("mroy31/ovs-img:0.0.0")
-	if id != "mroy31/ovs-img:0.0.0" {
-		t.Fatalf("Error: %s != mroy31/ovs-img:0.0.0", id)
+	tagged := []string{
+		"mroy31/ovs-img:0.0.0",
+		"mroy31/ovs-img:1.0-rc1",
+		"repo@sha256:abcdef",
+	}
+	for _, image := range tagged {
+		if id := GetDockerImageId(image); id != image {
+			t.Errorf("existing tag or digest was modified: %s != %s", id, image)
+		}
+	}
+
+	withPort := "registry.example.com:5000/ovs-img"
+	expectedPort := withPort + ":" + IMAGE_VERSION
+	if id := GetDockerImageId(withPort); id != expectedPort {
+		t.Fatalf("registry port was mistaken for a tag: %s != %s", id, expectedPort)
+	}
+}
+
+func TestOptions_ParseServerConfig_UpdateDefaults(t *testing.T) {
+	config := t.TempDir() + "/config.yaml"
+	if err := os.WriteFile(config, []byte("listen: \"localhost:10110\"\n"), 0644); err != nil {
+		t.Fatalf("unable to write config file: %v", err)
+	}
+
+	// ParseServerConfig modifies the global config, restore it for other tests.
+	previous := ServerConfig
+	defer func() { ServerConfig = previous }()
+
+	if err := ParseServerConfig(config); err != nil {
+		t.Fatalf("unable to parse config file: %v", err)
+	}
+
+	if ServerConfig.Update.Enabled {
+		t.Error("update must be disabled by default")
+	}
+	if ServerConfig.Update.Repository != "https://github.com/satcomprojects/gonetem" {
+		t.Errorf("unexpected default repository: %s", ServerConfig.Update.Repository)
+	}
+	if ServerConfig.Update.Branch != "master" {
+		t.Errorf("unexpected default branch: %s", ServerConfig.Update.Branch)
+	}
+	if ServerConfig.Update.GoVersion != "1.24.0" {
+		t.Errorf("unexpected default go version: %s", ServerConfig.Update.GoVersion)
+	}
+}
+
+func TestOptions_ParseServerConfig_UpdateSection(t *testing.T) {
+	config := t.TempDir() + "/config.yaml"
+	data := `
+listen: "localhost:10110"
+update:
+  enabled: true
+  branch: develop
+  goVersion: "1.25.1"
+  workdir: /var/tmp/gonetem
+`
+	if err := os.WriteFile(config, []byte(data), 0644); err != nil {
+		t.Fatalf("unable to write config file: %v", err)
+	}
+
+	previous := ServerConfig
+	defer func() { ServerConfig = previous }()
+
+	if err := ParseServerConfig(config); err != nil {
+		t.Fatalf("unable to parse config file: %v", err)
+	}
+
+	if !ServerConfig.Update.Enabled {
+		t.Error("update must be enabled")
+	}
+	if ServerConfig.Update.Branch != "develop" {
+		t.Errorf("unexpected branch: %s", ServerConfig.Update.Branch)
+	}
+	if ServerConfig.Update.GoVersion != "1.25.1" {
+		t.Errorf("unexpected go version: %s", ServerConfig.Update.GoVersion)
+	}
+	if ServerConfig.Update.Workdir != "/var/tmp/gonetem" {
+		t.Errorf("unexpected workdir: %s", ServerConfig.Update.Workdir)
+	}
+	if ServerConfig.Update.Repository != "https://github.com/satcomprojects/gonetem" {
+		t.Errorf("repository must keep its default value: %s", ServerConfig.Update.Repository)
 	}
 }

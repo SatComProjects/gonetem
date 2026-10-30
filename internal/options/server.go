@@ -5,14 +5,19 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
+	"strings"
 
 	"google.golang.org/grpc/credentials"
 	"sigs.k8s.io/yaml"
 )
 
+// VERSION is a variable so release builds can override it with:
+//
+//	-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=..."
+var VERSION = "0.7.0"
+
 const (
-	VERSION               = "0.6.0"
+	IMAGE_VERSION         = "0.6.0"
 	NETEM_ID              = "ntm"
 	SERVER_CONFIG_FILE    = "/etc/gonetem/config.yaml"
 	MINIMUM_SERVER_CONFIG = `
@@ -25,6 +30,11 @@ tls:
 workdir: /tmp
 docker:
   timeoutop: 60
+  createConcurrency: 30
+  startConcurrency: 30
+  removeConcurrency: 30
+  configConcurrency: 30
+  linkConcurrency: 30
   nodes:
     router:
       image: mroy31/gonetem-frr
@@ -33,6 +43,12 @@ docker:
     server:
       image: mroy31/gonetem-server
   extraNodes: []
+update:
+  enabled: false
+  repository: https://github.com/satcomprojects/gonetem
+  branch: master
+  goVersion: "1.24.0"
+  workdir: ""
 `
 	INITIAL_SERVER_CONFIG = `
 listen: "localhost:10110"
@@ -44,6 +60,11 @@ tls:
 workdir: /tmp
 docker:
   timeoutop: 60
+  createConcurrency: 30
+  startConcurrency: 30
+  removeConcurrency: 30
+  configConcurrency: 30
+  linkConcurrency: 30
   nodes:
     router:
       type: router
@@ -161,6 +182,12 @@ docker:
       configurationFiles:
   extraNodes: []
   ovsImage: mroy31/gonetem-ovs
+update:
+  enabled: false
+  repository: https://github.com/satcomprojects/gonetem
+  branch: master
+  goVersion: "1.24.0"
+  workdir: ""
 `
 )
 
@@ -195,13 +222,34 @@ type DockerNodeConfig struct {
 	Options              DockerNodeOptions
 }
 
+// UpdateConfig configures the self-update of gonetem-server, triggered by
+// the `gonetem-console update` command.
+type UpdateConfig struct {
+	// Enabled must be set to true for the server to accept update requests.
+	Enabled bool
+	// Repository is the git repository cloned to build the new version.
+	Repository string
+	// Branch is the git branch (or tag) checked out in Repository.
+	Branch string
+	// GoVersion is the version of go downloaded to build gonetem.
+	GoVersion string
+	// Workdir is the folder used to clone and build gonetem. If empty, a
+	// temporary directory is used.
+	Workdir string
+}
+
 type NetemServerConfig struct {
 	Listen  string
 	Tls     TLSOptions
 	Workdir string
 	Docker  struct {
-		Timeoutop int
-		Nodes     struct {
+		Timeoutop         int
+		CreateConcurrency int
+		StartConcurrency  int
+		RemoveConcurrency int
+		ConfigConcurrency int
+		LinkConcurrency   int
+		Nodes             struct {
 			Router DockerNodeConfig
 			Host   DockerNodeConfig
 			Server DockerNodeConfig
@@ -210,6 +258,7 @@ type NetemServerConfig struct {
 		ExtraNodes []DockerNodeConfig
 		OvsImage   string
 	}
+	Update UpdateConfig
 }
 
 var (
@@ -233,17 +282,44 @@ func ParseServerConfig(config string) error {
 		return err
 	}
 
-	return yaml.Unmarshal(data, &ServerConfig)
+	if err := yaml.Unmarshal(data, &ServerConfig); err != nil {
+		return err
+	}
+
+	// The update section is optional: keep the defaults for the keys that
+	// are not defined in the configuration file.
+	defaults := NetemServerConfig{}
+	if err := yaml.Unmarshal([]byte(INITIAL_SERVER_CONFIG), &defaults); err != nil {
+		return err
+	}
+
+	if ServerConfig.Update.Repository == "" {
+		ServerConfig.Update.Repository = defaults.Update.Repository
+	}
+	if ServerConfig.Update.Branch == "" {
+		ServerConfig.Update.Branch = defaults.Update.Branch
+	}
+	if ServerConfig.Update.GoVersion == "" {
+		ServerConfig.Update.GoVersion = defaults.Update.GoVersion
+	}
+
+	return nil
 }
 
 func GetDockerImageId(image string) string {
-	hasTagRE := regexp.MustCompile(`^\S+:[\w\.]+$`)
-
-	if !hasTagRE.MatchString(image) {
-		image = fmt.Sprintf("%s:%s", image, VERSION)
+	// Preserve an existing tag or digest. A colon after the last slash is a
+	// tag; '@' introduces a digest.
+	if strings.Contains(image, "@") {
+		return image
 	}
 
-	return image
+	lastSlash := strings.LastIndex(image, "/")
+	lastColon := strings.LastIndex(image, ":")
+	if lastColon > lastSlash {
+		return image
+	}
+
+	return fmt.Sprintf("%s:%s", image, IMAGE_VERSION)
 }
 
 func LoadServerTLSCredentials() (credentials.TransportCredentials, error) {

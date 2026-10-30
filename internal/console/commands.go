@@ -385,6 +385,46 @@ var pullCmd = &cobra.Command{
 	},
 }
 
+var updateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update gonetem on the server",
+	Long: `Update gonetem on the server: pull the latest version of gonetem, build it
+and install it. The server must be restarted to use the new version.`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		client, err := NewClient(getServerUri())
+		if err != nil {
+			Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
+		}
+		defer client.Conn.Close()
+
+		stream, err := client.Client.ServerUpdate(context.Background(), &emptypb.Empty{})
+		if err != nil {
+			Fatal("Unable to update gonetem: %v", err)
+		}
+
+		for {
+			msg, err := stream.Recv()
+			if err == io.EOF {
+				break
+			} else if err != nil {
+				Fatal("Error while updating gonetem: %v", err)
+			}
+
+			switch msg.Code {
+			case proto.UpdateSrvMsg_START:
+				fmt.Println(color.CyanString("[%s] %s", msg.Step, msg.Message))
+			case proto.UpdateSrvMsg_LOG:
+				fmt.Printf("  %s\n", msg.Message)
+			case proto.UpdateSrvMsg_OK:
+				fmt.Println(color.GreenString(msg.Message))
+			case proto.UpdateSrvMsg_ERROR:
+				Fatal("Update failed: %s", msg.Message)
+			}
+		}
+	},
+}
+
 func Init() {
 	rootCmd.PersistentFlags().StringVarP(
 		&serverFlag, "server", "s", "",
@@ -407,6 +447,7 @@ func Init() {
 	rootCmd.AddCommand(openCmd)
 	rootCmd.AddCommand(consoleCmd)
 	rootCmd.AddCommand(pullCmd)
+	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(extractCmd)
 	rootCmd.AddCommand(getConfigCmd())
 }

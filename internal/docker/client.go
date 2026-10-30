@@ -4,21 +4,25 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/moby/term"
 	"github.com/mroy31/gonetem/internal/utils"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/singleflight"
 )
 
 type NetemContainerList struct {
@@ -30,11 +34,56 @@ type DockerClient struct {
 	cli *client.Client
 }
 
-func (c *DockerClient) Close() error {
-	return c.cli.Close()
+var (
+	imagePresenceMu    sync.RWMutex
+	imagePresenceCache = make(map[string]bool)
+	imagePresenceGroup singleflight.Group
+)
+
+func rememberImagePresent(image string) {
+	imagePresenceMu.Lock()
+	imagePresenceCache[image] = true
+	imagePresenceMu.Unlock()
 }
 
-func (c *DockerClient) IsImagePresent(ctx context.Context, imgName string) (bool, error) {
+func imagePresentCached(ctx context.Context, image string, check func(context.Context) (bool, error)) (bool, error) {
+	imagePresenceMu.RLock()
+	present, found := imagePresenceCache[image]
+	imagePresenceMu.RUnlock()
+	if found {
+		return present, nil
+	}
+
+	value, err, _ := imagePresenceGroup.Do(image, func() (any, error) {
+		imagePresenceMu.RLock()
+		cached, ok := imagePresenceCache[image]
+		imagePresenceMu.RUnlock()
+		if ok {
+			return cached, nil
+		}
+
+		present, err := check(ctx)
+		if err != nil {
+			return false, err
+		}
+		if present {
+			rememberImagePresent(image)
+		}
+		return present, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return value.(bool), nil
+}
+
+func (c *DockerClient) Close() error {
+	// The underlying Docker client is shared for the lifetime of the process.
+	// Closing individual handles would break concurrent/reused operations.
+	return nil
+}
+
+func (c *DockerClient) isImagePresentUncached(ctx context.Context, imgName string) (bool, error) {
 	list, err := c.cli.ImageList(ctx, image.ListOptions{All: true})
 	if err != nil {
 		return false, err
@@ -50,6 +99,12 @@ func (c *DockerClient) IsImagePresent(ctx context.Context, imgName string) (bool
 	return false, nil
 }
 
+func (c *DockerClient) IsImagePresent(ctx context.Context, imgName string) (bool, error) {
+	return imagePresentCached(ctx, imgName, func(ctx context.Context) (bool, error) {
+		return c.isImagePresentUncached(ctx, imgName)
+	})
+}
+
 func (c *DockerClient) ImagePull(ctx context.Context, imgName string) error {
 	out, err := c.cli.ImagePull(ctx, imgName, image.PullOptions{})
 	if err != nil {
@@ -57,8 +112,20 @@ func (c *DockerClient) ImagePull(ctx context.Context, imgName string) error {
 	}
 	defer out.Close()
 
-	io.Copy(io.Discard, out)
-	return nil
+	dec := json.NewDecoder(out)
+	for {
+		var msg jsonmessage.JSONMessage
+		if err := dec.Decode(&msg); err != nil {
+			if err == io.EOF {
+				rememberImagePresent(imgName)
+				return nil
+			}
+			return err
+		}
+		if msg.Error != nil {
+			return msg.Error
+		}
+	}
 }
 
 func (c *DockerClient) List(ctx context.Context, prefix string) ([]NetemContainerList, error) {
@@ -173,17 +240,12 @@ func (c *DockerClient) Stop(ctx context.Context, containerId string) error {
 }
 
 func (c *DockerClient) Rm(ctx context.Context, containerId string) error {
-	state, err := c.GetState(ctx, containerId)
-	if err != nil {
-		return err
+	err := c.cli.ContainerRemove(ctx, containerId, container.RemoveOptions{Force: true})
+	if err != nil && client.IsErrNotFound(err) {
+		// Cleanup and project close are idempotent.
+		return nil
 	}
-
-	if state == "running" {
-		if err := c.Stop(ctx, containerId); err != nil {
-			return err
-		}
-	}
-	return c.cli.ContainerRemove(ctx, containerId, container.RemoveOptions{})
+	return err
 }
 
 func (c *DockerClient) Pid(ctx context.Context, containerId string) (int, error) {
@@ -505,13 +567,22 @@ func (c *DockerClient) ExecTty(
 	return nil
 }
 
+var (
+	sharedDockerMu  sync.Mutex
+	sharedDockerCLI *client.Client
+)
+
 func NewDockerClient() (*DockerClient, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv)
-	if err != nil {
-		return nil, err
+	sharedDockerMu.Lock()
+	defer sharedDockerMu.Unlock()
+
+	if sharedDockerCLI == nil {
+		cli, err := client.NewClientWithOpts(client.FromEnv)
+		if err != nil {
+			return nil, err
+		}
+		sharedDockerCLI = cli
 	}
 
-	return &DockerClient{
-		cli: cli,
-	}, nil
+	return &DockerClient{cli: sharedDockerCLI}, nil
 }

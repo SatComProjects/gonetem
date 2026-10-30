@@ -103,12 +103,14 @@ func main() {
 	logrus.Warn("Received shutdown signal")
 	cancel()
 
-	if err := netemServer.Close(); err != nil {
-		logrus.Errorf("Error when close server %v", err)
+	if grpcServer != nil {
+		// Stop accepting new RPCs before closing projects so no handler can
+		// mutate the project map while shutdown is iterating it.
+		grpcServer.GracefulStop()
 	}
 
-	if grpcServer != nil {
-		grpcServer.GracefulStop()
+	if err := netemServer.Close(); err != nil {
+		logrus.Errorf("Error when close server %v", err)
 	}
 	// remove unix socket file
 	if _, err := os.Stat(options.ServerConfig.Listen); err == nil {

@@ -1,10 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path"
-	"reflect"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,9 +29,18 @@ const (
 	maxConcurrentNodeTask = 30
 )
 
-var (
-	mutex = &sync.Mutex{}
-)
+func concurrencyLimit(configured int) int {
+	if configured > 0 {
+		return configured
+	}
+	return maxConcurrentNodeTask
+}
+
+func nodeCreateLimit() int { return concurrencyLimit(options.ServerConfig.Docker.CreateConcurrency) }
+func nodeStartLimit() int  { return concurrencyLimit(options.ServerConfig.Docker.StartConcurrency) }
+func nodeRemoveLimit() int { return concurrencyLimit(options.ServerConfig.Docker.RemoveConcurrency) }
+func nodeConfigLimit() int { return concurrencyLimit(options.ServerConfig.Docker.ConfigConcurrency) }
+func linkCreateLimit() int { return concurrencyLimit(options.ServerConfig.Docker.LinkConcurrency) }
 
 type QoSConfig struct {
 	Loss   float64 `yaml:",omitempty"` // percent
@@ -53,6 +64,72 @@ type LinkConfig struct {
 	Peer2QoS QoSConfig
 }
 
+const (
+	maxDelayMS = 274_000 // keeps tick conversion inside uint32
+	// 17_000_000 * 125 = 2.125e9, which also fits a 32-bit signed int.
+	// If higher rates are needed, compute rate*125 in uint64 in tc.go.
+	maxRateKbps = 17_000_000
+)
+
+func (q QoSConfig) WithDefaults() QoSConfig {
+	if q.Rate > 0 && q.Buffer == 0 {
+		q.Buffer = 1.0
+	}
+	return q
+}
+
+func (q QoSConfig) validate(prefix string) error {
+	if q.Delay < 0 || q.Delay > maxDelayMS {
+		return fmt.Errorf("%s delay must be in [0, %d] ms", prefix, maxDelayMS)
+	}
+	if q.Jitter < 0 || q.Jitter > maxDelayMS {
+		return fmt.Errorf("%s jitter must be in [0, %d] ms", prefix, maxDelayMS)
+	}
+	if q.Jitter > 0 && q.Delay == 0 {
+		return fmt.Errorf("%s jitter requires a non-zero delay", prefix)
+	}
+	if q.Loss < 0 || q.Loss > 100 {
+		return fmt.Errorf("%s loss must be in [0, 100] percent", prefix)
+	}
+	if q.Rate < 0 || q.Rate > maxRateKbps {
+		return fmt.Errorf("%s rate must be in [0, %d] kbps", prefix, maxRateKbps)
+	}
+	if q.Rate > 0 && q.Delay == 0 {
+		return fmt.Errorf("%s rate requires a non-zero delay", prefix)
+	}
+	if q.Buffer < 0 {
+		return fmt.Errorf("%s buffer must be >= 0", prefix)
+	}
+	if q.Buffer > 0 && q.Rate == 0 {
+		return fmt.Errorf("%s buffer requires a non-zero rate", prefix)
+	}
+	if q.Burst < 0 {
+		return fmt.Errorf("%s burst must be >= 0", prefix)
+	}
+	if q.Burst > 0 && q.Rate == 0 {
+		return fmt.Errorf("%s burst requires a non-zero rate", prefix)
+	}
+	return nil
+}
+
+func (l LinkConfig) Validate() error {
+	top := QoSConfig{
+		Loss:   l.Loss,
+		Delay:  l.Delay,
+		Jitter: l.Jitter,
+		Rate:   l.Rate,
+		Buffer: l.Buffer,
+		Burst:  l.Burst,
+	}
+	if err := top.validate("link"); err != nil {
+		return err
+	}
+	if err := l.Peer1QoS.validate("link peer1"); err != nil {
+		return err
+	}
+	return l.Peer2QoS.validate("link peer2")
+}
+
 func (l *LinkConfig) GetPeer1QoS() QoSConfig {
 	if l.Peer1QoS.Loss > 0 ||
 		l.Peer1QoS.Delay > 0 ||
@@ -60,7 +137,7 @@ func (l *LinkConfig) GetPeer1QoS() QoSConfig {
 		l.Peer1QoS.Rate > 0 ||
 		l.Peer1QoS.Buffer > 0 ||
 		l.Peer1QoS.Burst > 0 {
-		return l.Peer1QoS
+		return l.Peer1QoS.WithDefaults()
 	}
 
 	return QoSConfig{
@@ -70,7 +147,7 @@ func (l *LinkConfig) GetPeer1QoS() QoSConfig {
 		Rate:   l.Rate,
 		Buffer: l.Buffer,
 		Burst:  l.Burst,
-	}
+	}.WithDefaults()
 }
 
 func (l *LinkConfig) GetPeer2QoS() QoSConfig {
@@ -80,7 +157,7 @@ func (l *LinkConfig) GetPeer2QoS() QoSConfig {
 		l.Peer2QoS.Rate > 0 ||
 		l.Peer2QoS.Buffer > 0 ||
 		l.Peer2QoS.Burst > 0 {
-		return l.Peer2QoS
+		return l.Peer2QoS.WithDefaults()
 	}
 
 	return QoSConfig{
@@ -90,7 +167,7 @@ func (l *LinkConfig) GetPeer2QoS() QoSConfig {
 		Rate:   l.Rate,
 		Buffer: l.Buffer,
 		Burst:  l.Burst,
-	}
+	}.WithDefaults()
 }
 
 type BridgeConfig struct {
@@ -158,6 +235,70 @@ type TopologyRunCloseProgressT struct {
 	Value int
 }
 
+type progressBatcher struct {
+	ch       chan TopologyRunCloseProgressT
+	mu       sync.Mutex
+	pending  map[RunCloseProgressCode]int
+	lastSent time.Time
+	interval time.Duration
+}
+
+func newProgressBatcher(ch chan TopologyRunCloseProgressT) *progressBatcher {
+	return &progressBatcher{
+		ch:       ch,
+		pending:  make(map[RunCloseProgressCode]int),
+		lastSent: time.Now(),
+		interval: 100 * time.Millisecond,
+	}
+}
+
+func (b *progressBatcher) Add(code RunCloseProgressCode) {
+	if b == nil || b.ch == nil {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.pending[code]++
+	if time.Since(b.lastSent) >= b.interval {
+		b.flushLocked()
+	}
+}
+
+func (b *progressBatcher) Set(code RunCloseProgressCode, value int) {
+	if b == nil || b.ch == nil {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.flushLocked()
+	b.ch <- TopologyRunCloseProgressT{Code: code, Value: value}
+	b.lastSent = time.Now()
+}
+
+func (b *progressBatcher) Flush() {
+	if b == nil || b.ch == nil {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.flushLocked()
+}
+
+func (b *progressBatcher) flushLocked() {
+	for code, count := range b.pending {
+		if count > 0 {
+			b.ch <- TopologyRunCloseProgressT{Code: code, Value: count}
+		}
+		delete(b.pending, code)
+	}
+	b.lastSent = time.Now()
+}
+
 const (
 	NODE_SAVE_COUNT SaveProgressCode = 1
 	NODE_SAVE       SaveProgressCode = 2
@@ -188,92 +329,160 @@ type NetemLink struct {
 	HasPeer2Netem bool
 	HasPeer1Tbf   bool
 	HasPeer2Tbf   bool
+	mu            sync.Mutex // serializes updates to the fields above
 }
 
-func (l *NetemLink) IsNetemRequired(q QoSConfig) bool {
-	return q.Delay > 0 || q.Loss > 0 || q.Jitter > 0
+func netemRequired(q QoSConfig) bool {
+	return q.Delay > 0 || q.Jitter > 0 || q.Loss > 0
 }
 
-func (l *NetemLink) SetPeer1TBF(ifName string, ns netns.NsHandle) error {
-	peerQoS := l.Config.GetPeer1QoS()
-
-	// create tbf qdisc if necessary
-	if peerQoS.Rate > 0 {
-		if err := link.CreateTbf(ifName, ns, peerQoS.Delay+l.Config.Jitter, peerQoS.Rate, peerQoS.Buffer, peerQoS.Burst, l.HasPeer1Tbf); err != nil {
-			return err
-		}
-		l.HasPeer1Tbf = true
+func applyPeerQoSDiff(ifName string, ns netns.NsHandle, old, next QoSConfig, hasTbf, hasNetem *bool) error {
+	if old == next {
+		return nil
 	}
 
+	oldTbf := old.Rate > 0
+	newTbf := next.Rate > 0
+	oldNetem := netemRequired(old)
+	newNetem := netemRequired(next)
+
+	reset := oldTbf != newTbf || oldNetem != newNetem ||
+		*hasTbf != oldTbf || *hasNetem != oldNetem
+
+	changeTbf := !reset && newTbf
+	changeNetem := !reset && newNetem
+
+	updatedTbf, updatedNetem, err := link.ApplyQoS(
+		ifName, ns, toLinkQoS(next), reset, changeTbf, changeNetem,
+	)
+	if err != nil {
+		return err
+	}
+
+	*hasTbf = updatedTbf
+	*hasNetem = updatedNetem
 	return nil
 }
 
-func (l *NetemLink) SetPeer2TBF(ifName string, ns netns.NsHandle) error {
-	peerQoS := l.Config.GetPeer2QoS()
-
-	// create tbf qdisc if necessary
-	if peerQoS.Rate > 0 {
-		if err := link.CreateTbf(ifName, ns, peerQoS.Delay+l.Config.Jitter, peerQoS.Rate, peerQoS.Buffer, peerQoS.Burst, l.HasPeer2Tbf); err != nil {
-			return err
-		}
-		l.HasPeer2Tbf = true
+func toLinkQoS(q QoSConfig) link.QoS {
+	return link.QoS{
+		Delay:  q.Delay,
+		Jitter: q.Jitter,
+		Loss:   q.Loss,
+		Rate:   q.Rate,
+		Buffer: q.Buffer,
+		Burst:  q.Burst,
 	}
+}
 
+func (l *NetemLink) ApplyPeer1QoS(ifName string, ns netns.NsHandle, reset bool) error {
+	q := l.Config.GetPeer1QoS()
+	hasTbf, hasNetem, err := link.ApplyQoS(
+		ifName, ns, toLinkQoS(q), reset, l.HasPeer1Tbf, l.HasPeer1Netem,
+	)
+	if err != nil {
+		return err
+	}
+	l.HasPeer1Tbf = hasTbf
+	l.HasPeer1Netem = hasNetem
 	return nil
 }
 
-func (l *NetemLink) SetPeer1Netem(ifName string, ns netns.NsHandle) error {
-	peerQoS := l.Config.GetPeer1QoS()
-
-	// create netem qdisc if necessary
-	if l.IsNetemRequired(peerQoS) {
-		// If rate limiting is also configured, netem must be attached as a child
-		// of the tbf inner queue because only one qdisc can sit at the root.
-		parent := link.RootParent
-		handle := link.RootHandle
-		if peerQoS.Rate > 0 {
-			parent = link.TbfInnerParent
-			handle = link.NetemChildHandle
-		}
-		if err := link.Netem(ifName, ns, peerQoS.Delay, peerQoS.Jitter, peerQoS.Loss, l.HasPeer1Netem, parent, handle); err != nil {
-			return err
-		}
-		l.HasPeer1Netem = true
+func (l *NetemLink) ApplyPeer2QoS(ifName string, ns netns.NsHandle, reset bool) error {
+	q := l.Config.GetPeer2QoS()
+	hasTbf, hasNetem, err := link.ApplyQoS(
+		ifName, ns, toLinkQoS(q), reset, l.HasPeer2Tbf, l.HasPeer2Netem,
+	)
+	if err != nil {
+		return err
 	}
-
-	return nil
-}
-
-func (l *NetemLink) SetPeer2Netem(ifName string, ns netns.NsHandle) error {
-	peerQoS := l.Config.GetPeer2QoS()
-
-	if l.IsNetemRequired(peerQoS) {
-		parent := link.RootParent
-		handle := link.RootHandle
-		if peerQoS.Rate > 0 {
-			parent = link.TbfInnerParent
-			handle = link.NetemChildHandle
-		}
-		if err := link.Netem(ifName, ns, peerQoS.Delay, peerQoS.Jitter, peerQoS.Loss, l.HasPeer2Netem, parent, handle); err != nil {
-			return err
-		}
-		l.HasPeer2Netem = true
-	}
-
+	l.HasPeer2Tbf = hasTbf
+	l.HasPeer2Netem = hasNetem
 	return nil
 }
 
 type NetemBridge struct {
-	Name          string
+	Name          string // generated kernel bridge name
+	ConfigName    string // original key in network.yml
 	HostInterface string
 	Peers         []NetemLinkPeer
 	Config        BridgeConfig
+}
+
+func splitPeer(peer string) (string, int, error) {
+	parts := strings.Split(peer, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", 0, fmt.Errorf("invalid peer %q: <node>.<ifIndex> required", peer)
+	}
+
+	idx, err := strconv.Atoi(parts[1])
+	if err != nil || idx < 0 {
+		return "", 0, fmt.Errorf("invalid interface index in peer %q: %v", peer, err)
+	}
+
+	return parts[0], idx, nil
 }
 
 type NetemNode struct {
 	Instance        INetemNode
 	LaunchAtStartup bool
 	Config          NodeConfig
+}
+
+type nodeNetnsCache struct {
+	mu      sync.Mutex
+	handles map[string]netns.NsHandle
+	group   singleflight.Group
+}
+
+func newNodeNetnsCache() *nodeNetnsCache {
+	return &nodeNetnsCache{handles: make(map[string]netns.NsHandle)}
+}
+
+func (c *nodeNetnsCache) get(node INetemNode) (netns.NsHandle, error) {
+	name := node.GetName()
+
+	c.mu.Lock()
+	if handle, ok := c.handles[name]; ok {
+		c.mu.Unlock()
+		return handle, nil
+	}
+	c.mu.Unlock()
+
+	value, err, _ := c.group.Do(name, func() (any, error) {
+		c.mu.Lock()
+		if handle, ok := c.handles[name]; ok {
+			c.mu.Unlock()
+			return handle, nil
+		}
+		c.mu.Unlock()
+
+		handle, err := node.GetNetns()
+		if err != nil {
+			return netns.None(), err
+		}
+
+		c.mu.Lock()
+		c.handles[name] = handle
+		c.mu.Unlock()
+		return handle, nil
+	})
+	if err != nil {
+		return netns.None(), err
+	}
+	return value.(netns.NsHandle), nil
+}
+
+func (c *nodeNetnsCache) closeAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for name, handle := range c.handles {
+		if err := handle.Close(); err != nil {
+			logrus.Warnf("unable to close netns of node %s: %v", name, err)
+		}
+		delete(c.handles, name)
+	}
 }
 
 type NetemTopologyManager struct {
@@ -283,12 +492,16 @@ type NetemTopologyManager struct {
 	IdGenerator *NodeIdentifierGenerator
 	nodes       []NetemNode
 	ovsInstance *ovs.OvsProjectInstance
+	needsOvs    bool
 	links       []*NetemLink
 	bridges     []*NetemBridge
 	mgntNet     *MgntNetwork
 	running     bool
 	logger      *logrus.Entry
-	mu          sync.Mutex
+	mu          sync.RWMutex
+	opMu        sync.RWMutex
+	syncMu      sync.Mutex
+	lastSynced  []byte
 }
 
 func (t *NetemTopologyManager) Check() error {
@@ -300,6 +513,43 @@ func (t *NetemTopologyManager) Check() error {
 			msg += "\n\t" + err.Error()
 		}
 		return fmt.Errorf("topology is not valid:%s", msg)
+	}
+
+	return nil
+}
+
+func writeFileAtomic(filename string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(filename)
+	tmp, err := os.CreateTemp(dir, ".gonetem-network-*")
+	if err != nil {
+		return fmt.Errorf("unable to create temporary file: %w", err)
+	}
+	tmpName := tmp.Name()
+
+	cleanup := func() {
+		tmp.Close()
+		os.Remove(tmpName)
+	}
+
+	if _, err := tmp.Write(data); err != nil {
+		cleanup()
+		return fmt.Errorf("unable to write temporary file: %w", err)
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		cleanup()
+		return fmt.Errorf("unable to set temporary file mode: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("unable to sync temporary file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("unable to close temporary file: %w", err)
+	}
+	if err := os.Rename(tmpName, filename); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("unable to replace network file: %w", err)
 	}
 
 	return nil
@@ -321,7 +571,7 @@ func (t *NetemTopologyManager) SynchroniseTopology() error {
 	}
 
 	for _, bridge := range t.bridges {
-		topo.Bridges[bridge.Name] = bridge.Config
+		topo.Bridges[bridge.ConfigName] = bridge.Config
 	}
 
 	if t.mgntNet != nil {
@@ -336,15 +586,25 @@ func (t *NetemTopologyManager) SynchroniseTopology() error {
 		return fmt.Errorf("unable to marshal yaml topo: %v", err)
 	}
 
-	if err := os.WriteFile(t.GetNetFilePath(), data, 0644); err != nil {
+	t.syncMu.Lock()
+	defer t.syncMu.Unlock()
+
+	if bytes.Equal(data, t.lastSynced) {
+		return nil
+	}
+
+	if err := writeFileAtomic(t.GetNetFilePath(), data, 0644); err != nil {
 		return fmt.Errorf("unable to write network file: %v", err)
 	}
+	t.lastSynced = append(t.lastSynced[:0], data...)
 
 	return nil
 }
 
 func (t *NetemTopologyManager) Load() error {
+	loadStart := time.Now()
 	filepath := path.Join(t.path, networkFilename)
+	checkStart := time.Now()
 	topology, errors := CheckTopology(filepath)
 	if len(errors) > 0 {
 		msg := ""
@@ -353,18 +613,26 @@ func (t *NetemTopologyManager) Load() error {
 		}
 		return fmt.Errorf("topology if not valid:%s", msg)
 	}
+	t.logger.Debugf("Load: CheckTopology took %s", time.Since(checkStart))
 
-	var err error
-	// Create openvswitch instance for this project
-	t.ovsInstance, err = ovs.NewOvsInstance(t.prjID)
-	if err != nil {
-		return err
+	t.needsOvs = false
+	for _, node := range topology.Nodes {
+		if node.Type == "ovs" {
+			t.needsOvs = true
+			break
+		}
 	}
 
+	// The OVS container is created lazily by Run (or when an OVS node is added).
+	t.ovsInstance = nil
+
 	// Create nodes
+	nodeCreateStart := time.Now()
+	t.mu.Lock()
 	t.nodes = make([]NetemNode, 0)
+	t.mu.Unlock()
 	g := new(errgroup.Group)
-	g.SetLimit(maxConcurrentNodeTask)
+	g.SetLimit(nodeCreateLimit())
 
 	for name, nConfig := range topology.Nodes {
 		name := name
@@ -372,6 +640,7 @@ func (t *NetemTopologyManager) Load() error {
 
 		g.Go(func() error {
 			t.logger.Debugf("Create node %s", name)
+			nodeStart := time.Now()
 
 			shortName, err := t.IdGenerator.GetId(name)
 			if err != nil {
@@ -380,21 +649,21 @@ func (t *NetemTopologyManager) Load() error {
 			node, err := CreateNode(t.prjID, name, shortName, nConfig)
 
 			if err != nil {
-				if !reflect.ValueOf(node).IsNil() {
-					t.logger.Infof("error node %t", node == nil)
+				if node != nil {
 					node.Close()
 				}
 
 				return fmt.Errorf("unable to create node %s: %w", name, err)
 			}
 
-			mutex.Lock()
+			t.mu.Lock()
 			t.nodes = append(t.nodes, NetemNode{
 				Instance:        node,
 				LaunchAtStartup: nConfig.Launch,
 				Config:          nConfig,
 			})
-			mutex.Unlock()
+			t.mu.Unlock()
+			t.logger.Debugf("Load: node %s created in %s", name, time.Since(nodeStart))
 
 			return nil
 		})
@@ -402,28 +671,33 @@ func (t *NetemTopologyManager) Load() error {
 	if err := g.Wait(); err != nil {
 		return err
 	}
+	t.logger.Debugf("Load: created %d nodes in %s", len(t.nodes), time.Since(nodeCreateStart))
 
 	// Create links
-	t.links = make([]*NetemLink, len(topology.Links))
+	linkBuildStart := time.Now()
+	newLinks := make([]*NetemLink, len(topology.Links))
 	for idx, lConfig := range topology.Links {
-		peer1 := strings.Split(lConfig.Peer1, ".")
-		peer2 := strings.Split(lConfig.Peer2, ".")
+		peer1Name, peer1Idx, err := splitPeer(lConfig.Peer1)
+		if err != nil {
+			return fmt.Errorf("invalid link %q-%q: %w", lConfig.Peer1, lConfig.Peer2, err)
+		}
+		peer2Name, peer2Idx, err := splitPeer(lConfig.Peer2)
+		if err != nil {
+			return fmt.Errorf("invalid link %q-%q: %w", lConfig.Peer1, lConfig.Peer2, err)
+		}
 
-		peer1Idx, _ := strconv.Atoi(peer1[1])
-		peer2Idx, _ := strconv.Atoi(peer2[1])
-
-		if lConfig.Buffer == 0.0 {
+		if lConfig.Buffer == 0.0 && lConfig.Rate > 0 {
 			// by default set limit buffer to 1.0 * BDP
 			lConfig.Buffer = 1.0
 		}
 
-		t.links[idx] = &NetemLink{
+		newLinks[idx] = &NetemLink{
 			Peer1: NetemLinkPeer{
-				Node:    t.GetNode(peer1[0]),
+				Node:    t.GetNode(peer1Name),
 				IfIndex: peer1Idx,
 			},
 			Peer2: NetemLinkPeer{
-				Node:    t.GetNode(peer2[0]),
+				Node:    t.GetNode(peer2Name),
 				IfIndex: peer2Idx,
 			},
 			HasPeer1Netem: false,
@@ -433,57 +707,104 @@ func (t *NetemTopologyManager) Load() error {
 			Config:        lConfig,
 		}
 	}
+	t.mu.Lock()
+	t.links = newLinks
+	t.mu.Unlock()
+	t.logger.Debugf("Load: built %d links in %s", len(newLinks), time.Since(linkBuildStart))
 
 	// Create bridges
+	bridgeBuildStart := time.Now()
 	bIdx := 0
-	t.bridges = make([]*NetemBridge, len(topology.Bridges))
+	newBridges := make([]*NetemBridge, len(topology.Bridges))
 	for bName, bConfig := range topology.Bridges {
 		shortName, err := t.IdGenerator.GetId(bName)
 		if err != nil {
 			return err
 		}
 
-		t.bridges[bIdx] = &NetemBridge{
+		newBridges[bIdx] = &NetemBridge{
 			Name:          options.NETEM_ID + t.prjID + "." + shortName,
+			ConfigName:    bName,
 			HostInterface: bConfig.Host,
 			Peers:         make([]NetemLinkPeer, len(bConfig.Interfaces)),
 			Config:        bConfig,
 		}
 
 		for pIdx, ifName := range bConfig.Interfaces {
-			peer := strings.Split(ifName, ".")
-			peerIdx, _ := strconv.Atoi(peer[1])
+			peerName, peerIdx, err := splitPeer(ifName)
+			if err != nil {
+				return fmt.Errorf("invalid bridge interface %q: %w", ifName, err)
+			}
 
-			t.bridges[bIdx].Peers[pIdx] = NetemLinkPeer{
-				Node:    t.GetNode(peer[0]),
+			node := t.GetNode(peerName)
+			if node == nil {
+				return fmt.Errorf("bridge interface %q references unknown node %s", ifName, peerName)
+			}
+
+			newBridges[bIdx].Peers[pIdx] = NetemLinkPeer{
+				Node:    node,
 				IfIndex: peerIdx,
 			}
 		}
 
 		bIdx++
 	}
+	t.mu.Lock()
+	t.bridges = newBridges
+	t.mu.Unlock()
+	t.logger.Debugf("Load: built %d bridges in %s", len(newBridges), time.Since(bridgeBuildStart))
 
 	// create mgnt network if necessary
-	t.mgntNet = nil
+	var newMgntNet *MgntNetwork
 	if topology.Mgntnet.Enable {
-		t.mgntNet = &MgntNetwork{
+		newMgntNet = &MgntNetwork{
 			NetId:     fmt.Sprintf("%s.mgnt", t.prjID),
 			IPAddress: topology.Mgntnet.Address,
 			NetNs:     link.GetRootNetns(),
 			Logger:    t.logger,
 		}
 	}
+	t.mu.Lock()
+	t.mgntNet = newMgntNet
+	t.mu.Unlock()
+
+	t.syncMu.Lock()
+	t.lastSynced = nil
+	t.syncMu.Unlock()
+	t.logger.Debugf("Load: total took %s", time.Since(loadStart))
 
 	return nil
 }
 
+func (t *NetemTopologyManager) ensureOvsInstance(start bool) error {
+	if t.ovsInstance == nil {
+		instance, err := ovs.NewOvsInstance(t.prjID)
+		if err != nil {
+			return err
+		}
+		t.ovsInstance = instance
+	}
+
+	if start {
+		return t.ovsInstance.Start()
+	}
+	return nil
+}
+
 func (t *NetemTopologyManager) Reload(progressCh chan TopologyRunCloseProgressT) ([]*proto.TopologyRunMsg_NodeMessages, error) {
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+
 	t.logger.Debug("Topo/Reload")
 
 	var err error
 	var nodeMessages []*proto.TopologyRunMsg_NodeMessages
 
-	if err = t.Close(progressCh); err != nil {
+	t.mu.RLock()
+	wasRunning := t.running
+	t.mu.RUnlock()
+
+	if err = t.closeLocked(progressCh); err != nil {
 		return nodeMessages, err
 	}
 
@@ -491,53 +812,85 @@ func (t *NetemTopologyManager) Reload(progressCh chan TopologyRunCloseProgressT)
 		return nodeMessages, err
 	}
 
-	if t.running {
-		t.running = false
-		return t.Run(progressCh)
+	if wasRunning {
+		return t.runLocked(progressCh)
 	}
 
 	return nodeMessages, nil
 }
 
 func (t *NetemTopologyManager) Run(progressCh chan TopologyRunCloseProgressT) ([]*proto.TopologyRunMsg_NodeMessages, error) {
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+	return t.runLocked(progressCh)
+}
+
+func (t *NetemTopologyManager) runLocked(progressCh chan TopologyRunCloseProgressT) (nodeMessages []*proto.TopologyRunMsg_NodeMessages, err error) {
+	runStart := time.Now()
 	t.logger.Debug("Topo/Run")
-	if progressCh != nil {
+	progress := newProgressBatcher(progressCh)
+	defer progress.Flush()
+	progress.Set(NODE_COUNT, len(t.nodes))
+	progress.Set(BRIDGE_COUNT, len(t.bridges))
+	progress.Set(LINK_COUNT, len(t.links))
 
-		progressCh <- TopologyRunCloseProgressT{Code: NODE_COUNT, Value: len(t.nodes)}
-		progressCh <- TopologyRunCloseProgressT{Code: BRIDGE_COUNT, Value: len(t.bridges)}
-		progressCh <- TopologyRunCloseProgressT{Code: LINK_COUNT, Value: len(t.links)}
-	}
-
-	var err error
-	var nodeMessages []*proto.TopologyRunMsg_NodeMessages
-
-	if t.running {
+	t.mu.RLock()
+	alreadyRunning := t.running
+	t.mu.RUnlock()
+	if alreadyRunning {
 		t.logger.Warn("Topology is already running")
 		return nodeMessages, nil
 	}
 
-	// 1 - start ovswitch container and init p2pSwitch
-	t.logger.Debug("Topo/Run: start ovswitch instance")
-	err = t.ovsInstance.Start()
-	if err != nil {
-		return nodeMessages, err
+	runSucceeded := false
+	// The early "already running" return above must not trigger rollback, so
+	// start the deferred cleanup only after that check.
+	defer func() {
+		if runSucceeded {
+			return
+		}
+
+		t.logger.Warn("Topology run failed, rolling back runtime state")
+		if closeErr := t.closeLocked(nil); closeErr != nil {
+			t.logger.Errorf("unable to roll back runtime state: %v", closeErr)
+		}
+		if loadErr := t.Load(); loadErr != nil {
+			t.logger.Errorf("unable to reload topology after failed run: %v", loadErr)
+		}
+	}()
+
+	netnsCache := newNodeNetnsCache()
+	defer netnsCache.closeAll()
+
+	// 1 - create and start the ovswitch container when the topology contains a switch
+	if t.needsOvs {
+		ovsStart := time.Now()
+		t.logger.Debug("Topo/Run: start ovswitch instance")
+		if err := t.ensureOvsInstance(true); err != nil {
+			return nodeMessages, err
+		}
+		t.logger.Debugf("Run: OVS start took %s", time.Since(ovsStart))
 	}
 
 	// 2 - optionnal - create mgnt network
 	if t.mgntNet != nil {
+		mgntStart := time.Now()
 		if err := t.mgntNet.Create(); err != nil {
 			return nodeMessages, err
 		}
+		t.logger.Debugf("Run: management network setup took %s", time.Since(mgntStart))
 	}
 
 	// 3 - start all required nodes
-	g := new(errgroup.Group)
-	g.SetLimit(maxConcurrentNodeTask)
+	nodeStartStart := time.Now()
+	startGroup := new(errgroup.Group)
+	startGroup.SetLimit(nodeStartLimit())
 
 	t.logger.Debug("Topo/Run: start nodes")
 	for _, node := range t.nodes {
 		node := node
-		g.Go(func() error {
+		startGroup.Go(func() error {
+			nodeStart := time.Now()
 			var err error = nil
 
 			if node.LaunchAtStartup {
@@ -545,97 +898,141 @@ func (t *NetemTopologyManager) Run(progressCh chan TopologyRunCloseProgressT) ([
 			}
 
 			if err == nil && node.Config.Mgnt.Enable {
-				err = t.setupMgntLink(&node)
+				err = t.setupMgntLink(&node, netnsCache)
 			}
 
+			t.logger.Debugf("Run: node %s start took %s", node.Instance.GetName(), time.Since(nodeStart))
+
 			if progressCh != nil {
-				progressCh <- TopologyRunCloseProgressT{Code: START_NODE}
+				progress.Add(START_NODE)
 			}
 			return err
 		})
 	}
-	if err := g.Wait(); err != nil {
+	if err := startGroup.Wait(); err != nil {
 		return nodeMessages, err
 	}
+	t.logger.Debugf("Run: all node starts took %s", time.Since(nodeStartStart))
 
-	// 3 - create links concurrently, one goroutine per source node group
+	// 3 - create links concurrently. Operations use thread-local namespaces
+	// and restore them afterwards, so links can be scheduled independently
+	// instead of being serialized by their source node.
+	linkGroup := new(errgroup.Group)
+	linkGroup.SetLimit(linkCreateLimit())
+	linkStart := time.Now()
+
 	t.logger.Debug("Topo/Run: setup links")
-	for _, group := range groupLinksBySourceNode(t.links) {
-		group := group
-		g.Go(func() error {
-			for _, l := range group {
-				if err := t.setupLink(l, false); err != nil {
-					return err
-				}
-				if progressCh != nil {
-					progressCh <- TopologyRunCloseProgressT{Code: SETUP_LINK}
-				}
+	for _, l := range t.links {
+		l := l
+		linkGroup.Go(func() error {
+			setupStart := time.Now()
+			if err := t.setupLink(l, false, netnsCache); err != nil {
+				return err
+			}
+			t.logger.Debugf(
+				"Run: link %s.%d-%s.%d setup took %s",
+				l.Peer1.Node.GetName(), l.Peer1.IfIndex,
+				l.Peer2.Node.GetName(), l.Peer2.IfIndex,
+				time.Since(setupStart),
+			)
+			if progressCh != nil {
+				progress.Add(SETUP_LINK)
 			}
 			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
+	if err := linkGroup.Wait(); err != nil {
 		return nodeMessages, err
 	}
+	t.logger.Debugf("Run: all link setups took %s", time.Since(linkStart))
 
 	// 4 - create bridges
+	bridgeGroup := new(errgroup.Group)
+	bridgeGroup.SetLimit(linkCreateLimit())
+	bridgeStart := time.Now()
+
 	t.logger.Debug("Topo/Run: setup bridges")
 	for _, br := range t.bridges {
 		br := br
-		g.Go(func() error {
-			err := t.setupBridge(br)
+		bridgeGroup.Go(func() error {
+			setupStart := time.Now()
+			err := t.setupBridge(br, netnsCache)
+			t.logger.Debugf("Run: bridge %s setup took %s", br.Name, time.Since(setupStart))
 
 			if progressCh != nil {
-				progressCh <- TopologyRunCloseProgressT{Code: START_BRIDGE}
+				progress.Add(START_BRIDGE)
 			}
 			return err
 		})
 	}
-	if err := g.Wait(); err != nil {
+	if err := bridgeGroup.Wait(); err != nil {
 		return nodeMessages, err
 	}
+	t.logger.Debugf("Run: all bridge setups took %s", time.Since(bridgeStart))
+	netnsCache.closeAll()
 
-	// 5 - load configs
-	// We ignore node config, we do it ourselves manually after project start
-	/*
-
+	// 5 - configure interfaces and load node configuration
 	t.logger.Debug("Topo/Run: load configuration")
 	timeout := options.ServerConfig.Docker.Timeoutop
 	configPath := path.Join(t.path, configDir)
+
+	configGroup := new(errgroup.Group)
+	configGroup.SetLimit(nodeConfigLimit())
+	configStart := time.Now()
+
+	var msgMu sync.Mutex
 	for _, node := range t.nodes {
-		g.Go(func() error {
-			var messages []string
-			var err error = nil
-
-			if node.Instance.IsRunning() {
-				if err = node.Instance.ConfigureInterfaces(); err != nil {
-					return err
+		node := node
+		configGroup.Go(func() error {
+			loadStart := time.Now()
+			defer func() {
+				t.logger.Debugf("Run: node %s config took %s", node.Instance.GetName(), time.Since(loadStart))
+			}()
+			if !node.Instance.IsRunning() {
+				if progressCh != nil {
+					progress.Add(LOADCONFIG_NODE)
 				}
+				return nil
+			}
 
-				messages, err = node.Instance.LoadConfig(configPath, timeout)
+			if err := node.Instance.ConfigureInterfaces(); err != nil {
+				return fmt.Errorf("unable to configure interfaces of node %s: %w", node.Instance.GetName(), err)
+			}
+
+			messages, err := node.Instance.LoadConfig(configPath, timeout)
+			if err != nil {
+				return fmt.Errorf("unable to load config of node %s: %w", node.Instance.GetName(), err)
+			}
+
+			if len(messages) > 0 {
+				msgMu.Lock()
 				nodeMessages = append(nodeMessages, &proto.TopologyRunMsg_NodeMessages{
 					Name:     node.Instance.GetName(),
 					Messages: messages,
 				})
-			}
-			if progressCh != nil {
-				progressCh <- TopologyRunCloseProgressT{Code: LOADCONFIG_NODE}
+				msgMu.Unlock()
 			}
 
-			return err
+			if progressCh != nil {
+				progress.Add(LOADCONFIG_NODE)
+			}
+			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
+	if err := configGroup.Wait(); err != nil {
 		return nodeMessages, err
 	}
+	t.logger.Debugf("Run: all node configs took %s", time.Since(configStart))
 
-	*/
-
+	t.mu.Lock()
 	t.running = true
+	t.mu.Unlock()
+	runSucceeded = true
+	t.logger.Debugf("Run: total took %s", time.Since(runStart))
 	return nodeMessages, nil
 }
 
-func (t *NetemTopologyManager) setupBridge(br *NetemBridge) error {
+func (t *NetemTopologyManager) setupBridge(br *NetemBridge, netnsCache *nodeNetnsCache) error {
 	rootNs := link.GetRootNetns()
 	defer rootNs.Close()
 
@@ -649,7 +1046,7 @@ func (t *NetemTopologyManager) setupBridge(br *NetemBridge) error {
 	}
 
 	for _, peer := range br.Peers {
-		peerNetns, err := peer.Node.GetNetns()
+		peerNetns, err := netnsCache.get(peer.Node)
 		if err != nil {
 			return err
 		}
@@ -667,9 +1064,13 @@ func (t *NetemTopologyManager) setupBridge(br *NetemBridge) error {
 			)
 		}
 
-		// set interface up
+		// set both sides up: the root veth is attached to the bridge, the peer
+		// lives in the node namespace and would otherwise stay DOWN
 		if err := link.SetInterfaceState(veth.Name, rootNs, link.IFSTATE_UP); err != nil {
 			return err
+		}
+		if err := link.SetInterfaceState(veth.PeerName, peerNetns, link.IFSTATE_UP); err != nil {
+			return fmt.Errorf("unable to set node-side interface %s up: %w", veth.PeerName, err)
 		}
 
 		if err := link.AttachToBridge(brId, veth.Name, rootNs); err != nil {
@@ -684,7 +1085,7 @@ func (t *NetemTopologyManager) setupBridge(br *NetemBridge) error {
 	return nil
 }
 
-func (t *NetemTopologyManager) setupMgntLink(node *NetemNode) error {
+func (t *NetemTopologyManager) setupMgntLink(node *NetemNode, netnsCache *nodeNetnsCache) error {
 	if t.mgntNet == nil {
 		return nil
 	}
@@ -692,7 +1093,7 @@ func (t *NetemTopologyManager) setupMgntLink(node *NetemNode) error {
 	rootNs := link.GetRootNetns()
 	defer rootNs.Close()
 
-	peerNetns, err := node.Instance.GetNetns()
+	peerNetns, err := netnsCache.get(node.Instance)
 	if err != nil {
 		return err
 	}
@@ -721,35 +1122,26 @@ func (t *NetemTopologyManager) setupMgntLink(node *NetemNode) error {
 	if err := t.mgntNet.AttachInterface(veth.Name); err != nil {
 		return err
 	}
-	node.Instance.AttachMgntInterface(peerIfname, peerNetns, node.Config.Mgnt.Address)
+	if err := node.Instance.AttachMgntInterface(peerIfname, peerNetns, node.Config.Mgnt.Address); err != nil {
+		return fmt.Errorf(
+			"unable to attach management interface for node %s: %w",
+			node.Instance.GetName(), err,
+		)
+	}
 
 	return nil
 }
 
-// groupLinksBySourceNode groups links by the name of their Peer1 node.
-// Each group contains all links where that node is the source peer, allowing
-// concurrent dispatch of one goroutine per group without namespace conflicts.
-func groupLinksBySourceNode(links []*NetemLink) map[string][]*NetemLink {
-	groups := make(map[string][]*NetemLink)
-	for _, l := range links {
-		name := l.Peer1.Node.GetName()
-		groups[name] = append(groups[name], l)
-	}
-	return groups
-}
-
-func (t *NetemTopologyManager) setupLink(l *NetemLink, configure bool) error {
-	peer1Netns, err := l.Peer1.Node.GetNetns()
+func (t *NetemTopologyManager) setupLink(l *NetemLink, configure bool, netnsCache *nodeNetnsCache) error {
+	peer1Netns, err := netnsCache.get(l.Peer1.Node)
 	if err != nil {
 		return err
 	}
-	defer peer1Netns.Close()
 
-	peer2Netns, err := l.Peer2.Node.GetNetns()
+	peer2Netns, err := netnsCache.get(l.Peer2.Node)
 	if err != nil {
 		return err
 	}
-	defer peer2Netns.Close()
 
 	peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
 	peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
@@ -763,19 +1155,11 @@ func (t *NetemTopologyManager) setupLink(l *NetemLink, configure bool) error {
 		)
 	}
 
-	// create tbf qdisc if necessary
-	if err := l.SetPeer1TBF(peer1IfName, peer1Netns); err != nil {
+	// apply both qdiscs with one namespace transition/socket per peer
+	if err := l.ApplyPeer1QoS(peer1IfName, peer1Netns, false); err != nil {
 		return err
 	}
-	if err := l.SetPeer2TBF(peer2IfName, peer2Netns); err != nil {
-		return err
-	}
-
-	// create netem qdisc if necessary
-	if err := l.SetPeer1Netem(peer1IfName, peer1Netns); err != nil {
-		return err
-	}
-	if err := l.SetPeer2Netem(peer2IfName, peer2Netns); err != nil {
+	if err := l.ApplyPeer2QoS(peer2IfName, peer2Netns, false); err != nil {
 		return err
 	}
 
@@ -799,17 +1183,26 @@ func (t *NetemTopologyManager) setupLink(l *NetemLink, configure bool) error {
 }
 
 func (t *NetemTopologyManager) GetLink(peer1V string, peer2V string) (*NetemLink, int, error) {
-	peer1 := strings.Split(peer1V, ".")
-	peer2 := strings.Split(peer2V, ".")
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.getLinkLocked(peer1V, peer2V)
+}
 
-	peer1Idx, _ := strconv.Atoi(peer1[1])
-	peer2Idx, _ := strconv.Atoi(peer2[1])
+func (t *NetemTopologyManager) getLinkLocked(peer1V string, peer2V string) (*NetemLink, int, error) {
+	peer1Name, peer1Idx, err := splitPeer(peer1V)
+	if err != nil {
+		return nil, -1, err
+	}
+	peer2Name, peer2Idx, err := splitPeer(peer2V)
+	if err != nil {
+		return nil, -1, err
+	}
 
 	for idx, l := range t.links {
 		if l.Peer1.IfIndex == peer1Idx &&
-			l.Peer1.Node.GetName() == peer1[0] &&
+			l.Peer1.Node.GetName() == peer1Name &&
 			l.Peer2.IfIndex == peer2Idx &&
-			l.Peer2.Node.GetName() == peer2[0] {
+			l.Peer2.Node.GetName() == peer2Name {
 			return l, idx, nil
 		}
 	}
@@ -817,9 +1210,9 @@ func (t *NetemTopologyManager) GetLink(peer1V string, peer2V string) (*NetemLink
 	// check for inverse link
 	for idx, l := range t.links {
 		if l.Peer1.IfIndex == peer2Idx &&
-			l.Peer1.Node.GetName() == peer2[0] &&
+			l.Peer1.Node.GetName() == peer2Name &&
 			l.Peer2.IfIndex == peer1Idx &&
-			l.Peer2.Node.GetName() == peer1[0] {
+			l.Peer2.Node.GetName() == peer1Name {
 			return l, idx, nil
 		}
 	}
@@ -831,45 +1224,81 @@ func (t *NetemTopologyManager) GetLink(peer1V string, peer2V string) (*NetemLink
 }
 
 func (t *NetemTopologyManager) LinkAdd(linkCfg LinkConfig, sync bool) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	_, _, err := t.GetLink(linkCfg.Peer1, linkCfg.Peer2)
-	if err == nil {
-		return fmt.Errorf("this link already exist")
-	}
-
-	peer1 := strings.Split(linkCfg.Peer1, ".")
-	peer2 := strings.Split(linkCfg.Peer2, ".")
-
-	peer1Idx, _ := strconv.Atoi(peer1[1])
-	peer2Idx, _ := strconv.Atoi(peer2[1])
-
-	if linkCfg.Buffer == 0.0 {
-		// by default set limit buffer to 1.0 * BDP
-		linkCfg.Buffer = 1.0
-	}
-
-	link := &NetemLink{
-		Peer1: NetemLinkPeer{
-			Node:    t.GetNode(peer1[0]),
-			IfIndex: peer1Idx,
-		},
-		Peer2: NetemLinkPeer{
-			Node:    t.GetNode(peer2[0]),
-			IfIndex: peer2Idx,
-		},
-		HasPeer1Netem: false,
-		HasPeer2Netem: false,
-		HasPeer1Tbf:   false,
-		HasPeer2Tbf:   false,
-		Config:        linkCfg,
-	}
-	if err := t.setupLink(link, false); err != nil {
+	if err := linkCfg.Validate(); err != nil {
 		return err
 	}
 
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+
+	var link *NetemLink
+	var running bool
+
+	err := func() error {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+
+		if _, _, err := t.getLinkLocked(linkCfg.Peer1, linkCfg.Peer2); err == nil {
+			return fmt.Errorf("this link already exist")
+		}
+
+		peer1Name, peer1Idx, err := splitPeer(linkCfg.Peer1)
+		if err != nil {
+			return err
+		}
+		peer2Name, peer2Idx, err := splitPeer(linkCfg.Peer2)
+		if err != nil {
+			return err
+		}
+
+		peer1Node := t.getNodeLocked(peer1Name)
+		if peer1Node == nil {
+			return fmt.Errorf("node %s not found in the topology", peer1Name)
+		}
+		peer2Node := t.getNodeLocked(peer2Name)
+		if peer2Node == nil {
+			return fmt.Errorf("node %s not found in the topology", peer2Name)
+		}
+
+		if linkCfg.Buffer == 0.0 && linkCfg.Rate > 0 {
+			// by default set limit buffer to 1.0 * BDP
+			linkCfg.Buffer = 1.0
+		}
+
+		link = &NetemLink{
+			Peer1: NetemLinkPeer{
+				Node:    peer1Node,
+				IfIndex: peer1Idx,
+			},
+			Peer2: NetemLinkPeer{
+				Node:    peer2Node,
+				IfIndex: peer2Idx,
+			},
+			HasPeer1Netem: false,
+			HasPeer2Netem: false,
+			HasPeer1Tbf:   false,
+			HasPeer2Tbf:   false,
+			Config:        linkCfg,
+		}
+		running = t.running
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+
+	if running {
+		netnsCache := newNodeNetnsCache()
+		defer netnsCache.closeAll()
+		if err := t.setupLink(link, true, netnsCache); err != nil {
+			return err
+		}
+	}
+
+	t.mu.Lock()
 	t.links = append(t.links, link)
+	t.mu.Unlock()
+
 	if sync {
 		return t.SynchroniseTopology()
 	}
@@ -878,107 +1307,172 @@ func (t *NetemTopologyManager) LinkAdd(linkCfg LinkConfig, sync bool) error {
 }
 
 func (t *NetemTopologyManager) LinkDel(linkCfg LinkConfig, sync bool) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
 
-	l, idx, err := t.GetLink(linkCfg.Peer1, linkCfg.Peer2)
+	var l *NetemLink
+	var idx int
+	var running bool
+
+	err := func() error {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+
+		var err error
+		l, idx, err = t.getLinkLocked(linkCfg.Peer1, linkCfg.Peer2)
+		if err != nil {
+			return err
+		}
+		running = t.running
+		return nil
+	}()
 	if err != nil {
 		return err
-	}
-
-	peer1Netns, err := l.Peer1.Node.GetNetns()
-	if err != nil {
-		return err
-	}
-	defer peer1Netns.Close()
-
-	peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
-	if err := link.DeleteLink(peer1IfName, peer1Netns); err != nil {
-		return err
-	}
-
-	t.links = append(t.links[:idx], t.links[idx+1:]...)
-	if sync {
-		return t.SynchroniseTopology()
-	}
-	return nil
-}
-
-func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	l, _, err := t.GetLink(linkCfg.Peer1, linkCfg.Peer2)
-	if err != nil {
-		return err
-	}
-	peer1Netns, err := l.Peer1.Node.GetNetns()
-	if err != nil {
-		return err
-	}
-
-	peer2Netns, err := l.Peer2.Node.GetNetns()
-	if err != nil {
-		return err
-	}
-
-	// update config
-	l.Config.Peer1QoS = linkCfg.Peer1QoS
-	l.Config.Peer2QoS = linkCfg.Peer2QoS
-
-	// If the request provides top-level QoS values, use them. Otherwise, if both
-	// peers have identical QoS, mirror them into the top-level fields so the
-	// topology file stays consistent and tests can read link.Config.Delay etc.
-	if linkCfg.Delay != 0 || linkCfg.Jitter != 0 || linkCfg.Loss != 0.0 ||
-		linkCfg.Rate != 0 || linkCfg.Buffer != 0.0 || linkCfg.Burst != 0 {
-		l.Config.Delay = linkCfg.Delay
-		l.Config.Jitter = linkCfg.Jitter
-		l.Config.Loss = linkCfg.Loss
-		l.Config.Rate = linkCfg.Rate
-		l.Config.Buffer = linkCfg.Buffer
-		l.Config.Burst = linkCfg.Burst
-	} else if linkCfg.Peer1QoS == linkCfg.Peer2QoS &&
-		(linkCfg.Peer1QoS.Delay != 0 || linkCfg.Peer1QoS.Jitter != 0 || linkCfg.Peer1QoS.Loss != 0.0 ||
-			linkCfg.Peer1QoS.Rate != 0 || linkCfg.Peer1QoS.Buffer != 0.0 || linkCfg.Peer1QoS.Burst != 0) {
-		l.Config.Delay = linkCfg.Peer1QoS.Delay
-		l.Config.Jitter = linkCfg.Peer1QoS.Jitter
-		l.Config.Loss = linkCfg.Peer1QoS.Loss
-		l.Config.Rate = linkCfg.Peer1QoS.Rate
-		l.Config.Buffer = linkCfg.Peer1QoS.Buffer
-		l.Config.Burst = linkCfg.Peer1QoS.Burst
 	}
 
 	peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
 	peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
 
-	// Reset existing qdiscs before re-applying them.  This lets us move cleanly
-	// between standalone netem, standalone tbf and chained tbf+netem without
-	// having to compute every possible transition.
-	if err := link.ResetQdiscs(peer1IfName, peer1Netns); err != nil {
-		return err
+	if running {
+		netnsCache := newNodeNetnsCache()
+		defer netnsCache.closeAll()
+		if err := t.deleteLink(l, netnsCache); err != nil {
+			return err
+		}
 	}
-	if err := link.ResetQdiscs(peer2IfName, peer2Netns); err != nil {
-		return err
-	}
-	l.HasPeer1Netem = false
-	l.HasPeer2Netem = false
-	l.HasPeer1Tbf = false
-	l.HasPeer2Tbf = false
 
-	// create/update tbf qdisc if necessary
-	if err := l.SetPeer1TBF(peer1IfName, peer1Netns); err != nil {
+	if err := l.Peer1.Node.DetachInterface(peer1IfName); err != nil {
 		return err
 	}
-	if err := l.SetPeer2TBF(peer2IfName, peer2Netns); err != nil {
+	if err := l.Peer2.Node.DetachInterface(peer2IfName); err != nil {
 		return err
 	}
 
-	// create/update netem qdisc if necessary
-	if err := l.SetPeer1Netem(peer1IfName, peer1Netns); err != nil {
+	t.mu.Lock()
+	t.links = append(t.links[:idx], t.links[idx+1:]...)
+	t.mu.Unlock()
+
+	if sync {
+		return t.SynchroniseTopology()
+	}
+	return nil
+}
+
+func applyLinkUpdateConfig(l *NetemLink, linkCfg LinkConfig) {
+	// Normalize request orientation to the stored link orientation.
+	storedPeer1 := fmt.Sprintf("%s.%d", l.Peer1.Node.GetName(), l.Peer1.IfIndex)
+	if linkCfg.Peer1 != storedPeer1 {
+		linkCfg.Peer1, linkCfg.Peer2 = linkCfg.Peer2, linkCfg.Peer1
+		linkCfg.Peer1QoS, linkCfg.Peer2QoS = linkCfg.Peer2QoS, linkCfg.Peer1QoS
+	}
+
+	hasTopLevel := linkCfg.Delay != 0 || linkCfg.Jitter != 0 || linkCfg.Loss != 0.0 ||
+		linkCfg.Rate != 0 || linkCfg.Buffer != 0.0 || linkCfg.Burst != 0
+
+	linkCfg.Peer1QoS = linkCfg.Peer1QoS.WithDefaults()
+	linkCfg.Peer2QoS = linkCfg.Peer2QoS.WithDefaults()
+
+	// Always replace all QoS fields, including zeroes, so a zero request clears
+	// the previous configuration.
+	l.Config.Peer1QoS = linkCfg.Peer1QoS
+	l.Config.Peer2QoS = linkCfg.Peer2QoS
+	l.Config.Delay = linkCfg.Delay
+	l.Config.Jitter = linkCfg.Jitter
+	l.Config.Loss = linkCfg.Loss
+	l.Config.Rate = linkCfg.Rate
+	l.Config.Buffer = linkCfg.Buffer
+	l.Config.Burst = linkCfg.Burst
+
+	// Preserve the historical behavior used by the tests: when the request has
+	// no top-level QoS and both directions are identical, mirror the peer values
+	// into the top-level fields.
+	if !hasTopLevel && linkCfg.Peer1QoS == linkCfg.Peer2QoS {
+		q := linkCfg.Peer1QoS
+		l.Config.Delay = q.Delay
+		l.Config.Jitter = q.Jitter
+		l.Config.Loss = q.Loss
+		l.Config.Rate = q.Rate
+		l.Config.Buffer = q.Buffer
+		l.Config.Burst = q.Burst
+	}
+}
+
+func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
+	if err := linkCfg.Validate(); err != nil {
 		return err
 	}
-	if err := l.SetPeer2Netem(peer2IfName, peer2Netns); err != nil {
+
+	// Non-sync link updates only mutate per-link state and independent kernel
+	// interfaces, so they can run concurrently. Structural operations
+	// (LinkAdd/Del, NodeAdd/Del, Run/Reload) still take the write side.
+	// Sync updates rewrite the topology file, so keep those exclusive.
+	if sync {
+		t.opMu.Lock()
+		defer t.opMu.Unlock()
+	} else {
+		t.opMu.RLock()
+		defer t.opMu.RUnlock()
+	}
+
+	t.mu.RLock()
+	l, _, err := t.getLinkLocked(linkCfg.Peer1, linkCfg.Peer2)
+	t.mu.RUnlock()
+	if err != nil {
 		return err
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var oldPeer1, oldPeer2, newPeer1, newPeer2 QoSConfig
+	var running bool
+
+	t.mu.Lock()
+	oldPeer1 = l.Config.GetPeer1QoS()
+	oldPeer2 = l.Config.GetPeer2QoS()
+	applyLinkUpdateConfig(l, linkCfg)
+	newPeer1 = l.Config.GetPeer1QoS()
+	newPeer2 = l.Config.GetPeer2QoS()
+	running = t.running
+	t.mu.Unlock()
+
+	if !running {
+		if sync {
+			return t.SynchroniseTopology()
+		}
+		return nil
+	}
+
+	if oldPeer1 != newPeer1 {
+		peer1Netns, err := l.Peer1.Node.GetNetns()
+		if err != nil {
+			return err
+		}
+		defer peer1Netns.Close()
+
+		peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
+		if err := applyPeerQoSDiff(
+			peer1IfName, peer1Netns, oldPeer1, newPeer1,
+			&l.HasPeer1Tbf, &l.HasPeer1Netem,
+		); err != nil {
+			return err
+		}
+	}
+
+	if oldPeer2 != newPeer2 {
+		peer2Netns, err := l.Peer2.Node.GetNetns()
+		if err != nil {
+			return err
+		}
+		defer peer2Netns.Close()
+
+		peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
+		if err := applyPeerQoSDiff(
+			peer2IfName, peer2Netns, oldPeer2, newPeer2,
+			&l.HasPeer2Tbf, &l.HasPeer2Netem,
+		); err != nil {
+			return err
+		}
 	}
 
 	if sync {
@@ -987,22 +1481,24 @@ func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
 	return nil
 }
 
-func (t *NetemTopologyManager) deleteLink(l *NetemLink) error {
-	peer1Netns, err := l.Peer1.Node.GetNetns()
+func (t *NetemTopologyManager) deleteLink(l *NetemLink, netnsCache *nodeNetnsCache) error {
+	peer1Netns, err := netnsCache.get(l.Peer1.Node)
 	if err != nil {
 		return err
 	}
-	defer peer1Netns.Close()
 
 	peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
 	return link.DeleteLink(peer1IfName, peer1Netns)
 }
 
 func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool) error {
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.GetNode(name) != nil {
+	if t.getNodeLocked(name) != nil {
 		return fmt.Errorf("node %s already exists in the topology", name)
 	}
 
@@ -1020,9 +1516,15 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 		return err
 	}
 
+	if config.Type == "ovs" {
+		if err := t.ensureOvsInstance(t.running); err != nil {
+			return fmt.Errorf("unable to initialize ovswitch instance: %w", err)
+		}
+	}
+
 	node, err := CreateNode(t.prjID, name, shortName, config)
 	if err != nil {
-		if node != nil && !reflect.ValueOf(node).IsNil() {
+		if node != nil {
 			node.Close()
 		}
 		return fmt.Errorf("unable to create node %s: %w", name, err)
@@ -1044,7 +1546,10 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 			}
 		}
 		if config.Mgnt.Enable {
-			if err := t.setupMgntLink(&netemNode); err != nil {
+			netnsCache := newNodeNetnsCache()
+			err := t.setupMgntLink(&netemNode, netnsCache)
+			netnsCache.closeAll()
+			if err != nil {
 				if config.Launch {
 					node.Stop()
 				}
@@ -1062,89 +1567,163 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 }
 
 func (t *NetemTopologyManager) NodeDel(name string, sync bool) error {
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+
+	var targetNode NetemNode
+	var pending []*NetemLink
+	var bridgePeerNames []string
+	var running bool
+	var mgntIfName string
+	var mgntNet *MgntNetwork
+
+	err := func() error {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+
+		found := false
+		for _, node := range t.nodes {
+			if node.Instance.GetName() == name {
+				targetNode = node
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("node %s not found in the topology", name)
+		}
+
+		running = t.running
+		mgntNet = t.mgntNet
+		if targetNode.Config.Mgnt.Enable {
+			mgntIfName = fmt.Sprintf("%s%s%s.m", options.NETEM_ID, t.prjID, targetNode.Instance.GetShortName())
+		}
+
+		for _, l := range t.links {
+			if l.Peer1.Node.GetName() == name || l.Peer2.Node.GetName() == name {
+				pending = append(pending, l)
+			}
+		}
+
+		for _, br := range t.bridges {
+			for _, peer := range br.Peers {
+				if peer.Node.GetName() == name {
+					bridgePeerNames = append(bridgePeerNames, fmt.Sprintf(
+						"%s%s%s.%d", options.NETEM_ID, t.prjID,
+						peer.Node.GetShortName(), peer.IfIndex,
+					))
+				}
+			}
+		}
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+
+	netnsCache := newNodeNetnsCache()
+	defer netnsCache.closeAll()
+
+	if running {
+		type deleteBatch struct {
+			node  INetemNode
+			names []string
+		}
+		batches := make(map[string]*deleteBatch)
+		for _, l := range pending {
+			node := l.Peer1.Node
+			key := node.GetName()
+			batch, ok := batches[key]
+			if !ok {
+				batch = &deleteBatch{node: node}
+				batches[key] = batch
+			}
+			batch.names = append(batch.names, node.GetInterfaceName(l.Peer1.IfIndex))
+		}
+
+		for _, batch := range batches {
+			ns, err := netnsCache.get(batch.node)
+			if err != nil {
+				return err
+			}
+			if err := link.DeleteLinks(batch.names, ns); err != nil {
+				return fmt.Errorf("unable to delete links for node %s: %w", name, err)
+			}
+		}
+
+		if len(bridgePeerNames) > 0 {
+			rootNs := link.GetRootNetns()
+			err := link.DeleteLinks(bridgePeerNames, rootNs)
+			rootNs.Close()
+			if err != nil {
+				return fmt.Errorf("unable to delete bridge links for node %s: %w", name, err)
+			}
+		}
+	}
+
+	for _, l := range pending {
+		peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
+		peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
+		if err := l.Peer1.Node.DetachInterface(peer1IfName); err != nil {
+			return fmt.Errorf("unable to detach interface %s from node %s: %w", peer1IfName, l.Peer1.Node.GetName(), err)
+		}
+		if err := l.Peer2.Node.DetachInterface(peer2IfName); err != nil {
+			return fmt.Errorf("unable to detach interface %s from node %s: %w", peer2IfName, l.Peer2.Node.GetName(), err)
+		}
+	}
+
+	netnsCache.closeAll()
+
+	// Commit link/bridge removals before closing the node. This preserves the
+	// previous partial-failure behavior if the container cannot be removed.
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	nodeIdx := -1
-	for idx, node := range t.nodes {
-		if node.Instance.GetName() == name {
-			nodeIdx = idx
-			break
+	keptLinks := t.links[:0]
+	for _, l := range t.links {
+		if l.Peer1.Node.GetName() != name && l.Peer2.Node.GetName() != name {
+			keptLinks = append(keptLinks, l)
 		}
 	}
-	if nodeIdx == -1 {
-		return fmt.Errorf("node %s not found in the topology", name)
-	}
+	t.links = keptLinks
 
-	targetNode := t.nodes[nodeIdx]
-
-	// remove all p2p links connected to this node
-	for i := len(t.links) - 1; i >= 0; i-- {
-		l := t.links[i]
-		if l.Peer1.Node.GetName() == name || l.Peer2.Node.GetName() == name {
-			if err := t.deleteLink(l); err != nil {
-				return fmt.Errorf("unable to delete link for node %s: %w", name, err)
-			}
-			t.links = append(t.links[:i], t.links[i+1:]...)
-		}
-	}
-
-	// remove all bridge peers connected to this node
-	if t.running {
-		rootNs := link.GetRootNetns()
-		defer rootNs.Close()
-
-		for _, br := range t.bridges {
-			for i := len(br.Peers) - 1; i >= 0; i-- {
-				p := br.Peers[i]
-				if p.Node.GetName() == name {
-					ifName := fmt.Sprintf("%s%s%s.%d", options.NETEM_ID, t.prjID, p.Node.GetShortName(), p.IfIndex)
-					if err := link.DeleteLink(ifName, rootNs); err != nil {
-						return fmt.Errorf("unable to delete bridge link for node %s: %w", name, err)
-					}
-					br.Peers = append(br.Peers[:i], br.Peers[i+1:]...)
-					for j, ifName := range br.Config.Interfaces {
-						peerParts := strings.Split(ifName, ".")
-						if peerParts[0] == name {
-							br.Config.Interfaces = append(br.Config.Interfaces[:j], br.Config.Interfaces[j+1:]...)
-							break
-						}
-					}
-				}
+	for _, br := range t.bridges {
+		keptPeers := br.Peers[:0]
+		for _, peer := range br.Peers {
+			if peer.Node.GetName() != name {
+				keptPeers = append(keptPeers, peer)
 			}
 		}
-	} else {
-		for _, br := range t.bridges {
-			for i := len(br.Peers) - 1; i >= 0; i-- {
-				if br.Peers[i].Node.GetName() == name {
-					br.Peers = append(br.Peers[:i], br.Peers[i+1:]...)
-					for j, ifName := range br.Config.Interfaces {
-						peerParts := strings.Split(ifName, ".")
-						if peerParts[0] == name {
-							br.Config.Interfaces = append(br.Config.Interfaces[:j], br.Config.Interfaces[j+1:]...)
-							break
-						}
-					}
-				}
+		br.Peers = keptPeers
+
+		keptInterfaces := br.Config.Interfaces[:0]
+		for _, ifName := range br.Config.Interfaces {
+			if strings.Split(ifName, ".")[0] != name {
+				keptInterfaces = append(keptInterfaces, ifName)
 			}
 		}
+		br.Config.Interfaces = keptInterfaces
 	}
+	t.mu.Unlock()
 
-	// detach mgnt interface if necessary
-	if t.running && t.mgntNet != nil && targetNode.Config.Mgnt.Enable {
-		mgntIfName := fmt.Sprintf("%s%s%s.m", options.NETEM_ID, t.prjID, targetNode.Instance.GetShortName())
-		if err := t.mgntNet.DetachInterface(mgntIfName); err != nil {
+	if running && mgntNet != nil && mgntIfName != "" {
+		if err := mgntNet.DetachInterface(mgntIfName); err != nil {
 			return fmt.Errorf("unable to detach mgnt interface for node %s: %w", name, err)
 		}
 	}
 
-	// close the node (stop if running and remove container/bridge)
+	// Close the node outside the topology lock: force-removing a container can
+	// take a while and must not block status/read operations.
 	if err := targetNode.Instance.Close(); err != nil {
 		return fmt.Errorf("unable to close node %s: %w", name, err)
 	}
 
-	// remove node from list
-	t.nodes = append(t.nodes[:nodeIdx], t.nodes[nodeIdx+1:]...)
+	t.mu.Lock()
+	for i, node := range t.nodes {
+		if node.Instance.GetName() == name {
+			t.nodes = append(t.nodes[:i], t.nodes[i+1:]...)
+			break
+		}
+	}
+	t.mu.Unlock()
 
 	if sync {
 		return t.SynchroniseTopology()
@@ -1153,6 +1732,8 @@ func (t *NetemTopologyManager) NodeDel(name string, sync bool) error {
 }
 
 func (t *NetemTopologyManager) IsRunning() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	return t.running
 }
 
@@ -1165,10 +1746,21 @@ func (t *NetemTopologyManager) ReadNetworkFile() ([]byte, error) {
 }
 
 func (t *NetemTopologyManager) WriteNetworkFile(data []byte) error {
-	return os.WriteFile(t.GetNetFilePath(), data, 0644)
+	if err := writeFileAtomic(t.GetNetFilePath(), data, 0644); err != nil {
+		return err
+	}
+
+	t.syncMu.Lock()
+	t.lastSynced = append(t.lastSynced[:0], data...)
+	t.syncMu.Unlock()
+
+	return nil
 }
 
 func (t *NetemTopologyManager) GetAllNodes() []INetemNode {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
 	nodeInstances := make([]INetemNode, len(t.nodes))
 	for i := range t.nodes {
 		nodeInstances[i] = t.nodes[i].Instance
@@ -1177,6 +1769,9 @@ func (t *NetemTopologyManager) GetAllNodes() []INetemNode {
 }
 
 func (t *NetemTopologyManager) IsNodeLaunchAtStartup(name string) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
 	for _, node := range t.nodes {
 		if node.Instance.GetName() == name {
 			return node.LaunchAtStartup
@@ -1186,6 +1781,12 @@ func (t *NetemTopologyManager) IsNodeLaunchAtStartup(name string) bool {
 }
 
 func (t *NetemTopologyManager) GetNode(name string) INetemNode {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.getNodeLocked(name)
+}
+
+func (t *NetemTopologyManager) getNodeLocked(name string) INetemNode {
 	for _, node := range t.nodes {
 		if node.Instance.GetName() == name {
 			return node.Instance
@@ -1197,6 +1798,10 @@ func (t *NetemTopologyManager) GetNode(name string) INetemNode {
 func (t *NetemTopologyManager) startNode(node INetemNode) ([]string, error) {
 	if err := node.Start(); err != nil {
 		return []string{}, fmt.Errorf("unable to start node %s: %w", node.GetName(), err)
+	}
+
+	if err := node.ConfigureInterfaces(); err != nil {
+		return []string{}, fmt.Errorf("unable to configure interfaces of node %s: %w", node.GetName(), err)
 	}
 
 	configPath := path.Join(t.path, configDir)
@@ -1217,9 +1822,11 @@ func (t *NetemTopologyManager) stopNode(node INetemNode) error {
 }
 
 func (t *NetemTopologyManager) Start(nodeName string) ([]string, error) {
-	if !t.running {
-		t.logger.Warnf("Start %s: topology not running", nodeName)
-		return []string{}, nil
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+
+	if !t.IsRunning() {
+		return []string{}, fmt.Errorf("topology is not running; start the topology first")
 	}
 
 	node := t.GetNode(nodeName)
@@ -1231,9 +1838,11 @@ func (t *NetemTopologyManager) Start(nodeName string) ([]string, error) {
 }
 
 func (t *NetemTopologyManager) Stop(nodeName string) error {
-	if !t.running {
-		t.logger.Warnf("Stop %s: topology not running", nodeName)
-		return nil
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+
+	if !t.IsRunning() {
+		return fmt.Errorf("topology is not running")
 	}
 
 	node := t.GetNode(nodeName)
@@ -1265,15 +1874,19 @@ func (t *NetemTopologyManager) Save(progressCh chan TopologySaveProgressT) error
 		}
 	}
 
+	t.mu.RLock()
+	nodes := append([]NetemNode(nil), t.nodes...)
+	t.mu.RUnlock()
+
 	if progressCh != nil {
-		progressCh <- TopologySaveProgressT{Code: NODE_SAVE_COUNT, Value: len(t.nodes)}
+		progressCh <- TopologySaveProgressT{Code: NODE_SAVE_COUNT, Value: len(nodes)}
 	}
 
 	timeout := options.ServerConfig.Docker.Timeoutop
 	g := new(errgroup.Group)
-	g.SetLimit(maxConcurrentNodeTask)
+	g.SetLimit(nodeConfigLimit())
 
-	for _, node := range t.nodes {
+	for _, node := range nodes {
 		node := node
 
 		g.Go(func() error {
@@ -1299,41 +1912,53 @@ func (t *NetemTopologyManager) Save(progressCh chan TopologySaveProgressT) error
 }
 
 func (t *NetemTopologyManager) Close(progressCh chan TopologyRunCloseProgressT) error {
-	if progressCh != nil {
-		progressCh <- TopologyRunCloseProgressT{Code: NODE_COUNT, Value: len(t.nodes)}
-		progressCh <- TopologyRunCloseProgressT{Code: BRIDGE_COUNT, Value: len(t.bridges)}
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+	return t.closeLocked(progressCh)
+}
+
+// nodeDestroysNetnsOnClose reports whether closing a node also removes the
+// network namespace that owns its link interfaces.
+func nodeDestroysNetnsOnClose(node INetemNode) bool {
+	switch node.GetType() {
+	case "docker", "namespace":
+		return true
+	default:
+		return false
 	}
+}
+
+func (t *NetemTopologyManager) closeLocked(progressCh chan TopologyRunCloseProgressT) error {
+	t.mu.Lock()
+	t.running = false
+	t.mu.Unlock()
+
+	progress := newProgressBatcher(progressCh)
+	defer progress.Flush()
+	progress.Set(NODE_COUNT, len(t.nodes))
+	progress.Set(BRIDGE_COUNT, len(t.bridges))
 
 	closeStart := time.Now()
 	t.logger.Infof("Close: starting (nodes=%d, bridges=%d)", len(t.nodes), len(t.bridges))
 
-	// phase 1: kill all nodes simultaneously
-	t.logger.Infof("Close: phase 1 - killing %d nodes", len(t.nodes))
-	killStart := time.Now()
-	kg := new(errgroup.Group)
-	kg.SetLimit(maxConcurrentNodeTask)
-	for _, node := range t.nodes {
-		kg.Go(func() error {
-			return node.Instance.Kill()
-		})
-	}
-	if err := kg.Wait(); err != nil {
-		t.logger.Errorf("Error when killing nodes: %v", err)
-	}
-	t.logger.Infof("Close: phase 1 done in %s", time.Since(killStart))
-
-	// phase 2: remove all nodes simultaneously
-	t.logger.Infof("Close: phase 2 - removing %d nodes", len(t.nodes))
+	// Remove all nodes concurrently. DockerNode.Close force-removes the
+	// container; there is no separate kill phase anymore.
+	t.logger.Infof("Close: removing %d nodes", len(t.nodes))
 	removeStart := time.Now()
 	g := new(errgroup.Group)
-	g.SetLimit(maxConcurrentNodeTask)
+	g.SetLimit(nodeRemoveLimit())
+	var failedNodes sync.Map
 	for _, node := range t.nodes {
+		node := node
 		g.Go(func() error {
+			nodeCloseStart := time.Now()
 			err := node.Instance.Close()
+			t.logger.Debugf("Close: node %s removal took %s", node.Instance.GetName(), time.Since(nodeCloseStart))
 			if progressCh != nil {
-				progressCh <- TopologyRunCloseProgressT{Code: CLOSE_NODE}
+				progress.Add(CLOSE_NODE)
 			}
 			if err != nil {
+				failedNodes.Store(node.Instance.GetName(), struct{}{})
 				return fmt.Errorf("node %s: %v", node.Instance.GetName(), err)
 			}
 			return nil
@@ -1342,47 +1967,66 @@ func (t *NetemTopologyManager) Close(progressCh chan TopologyRunCloseProgressT) 
 	if err := g.Wait(); err != nil {
 		t.logger.Errorf("Error when closing nodes: %v", err)
 	}
-	t.logger.Infof("Close: phase 2 done in %s", time.Since(removeStart))
+	t.logger.Infof("Close: node removal done in %s", time.Since(removeStart))
 
 	// close all bridges
 	t.logger.Infof("Close: phase 3 - removing %d bridges", len(t.bridges))
 	bridgeStart := time.Now()
 	rootNs := link.GetRootNetns()
 	defer rootNs.Close()
+
+	var bridgePeerNames []string
 	for _, br := range t.bridges {
 		for _, peer := range br.Peers {
-			ifName := fmt.Sprintf(
-				"%s%s%s.%d", options.NETEM_ID, t.prjID,
-				peer.Node.GetShortName(), peer.IfIndex)
-			if err := link.DeleteLink(ifName, rootNs); err != nil {
-				t.logger.Warnf("Error when deleting link %s: %v", ifName, err)
+			// A successfully removed Docker or namespace node already
+			// destroyed its veth peers with its netns. Only clean up failed
+			// nodes and OVS peers (the shared OVS container is removed later).
+			_, failed := failedNodes.Load(peer.Node.GetName())
+			if nodeDestroysNetnsOnClose(peer.Node) && !failed {
+				continue
 			}
 
+			bridgePeerNames = append(bridgePeerNames, fmt.Sprintf(
+				"%s%s%s.%d", options.NETEM_ID, t.prjID,
+				peer.Node.GetShortName(), peer.IfIndex,
+			))
 		}
+	}
 
-		if err := link.DeleteLink(br.Name, rootNs); err != nil {
-			t.logger.Warnf("Error when deleting bridge %s: %v", br.Name, err)
-		}
+	bridgeNames := make([]string, 0, len(t.bridges))
+	for _, br := range t.bridges {
+		bridgeNames = append(bridgeNames, br.Name)
+	}
 
+	if err := link.DeleteLinks(append(bridgePeerNames, bridgeNames...), rootNs); err != nil {
+		t.logger.Warnf("Error when deleting bridge links: %v", err)
+	}
+
+	for range t.bridges {
 		if progressCh != nil {
-			progressCh <- TopologyRunCloseProgressT{Code: CLOSE_BRIDGE}
+			progress.Add(CLOSE_BRIDGE)
 		}
 	}
 	t.logger.Infof("Close: phase 3 done in %s", time.Since(bridgeStart))
 
+	t.mu.Lock()
 	t.nodes = make([]NetemNode, 0)
 	t.links = make([]*NetemLink, 0)
 	t.bridges = make([]*NetemBridge, 0)
+	t.needsOvs = false
+	t.mu.Unlock()
 	t.IdGenerator.Close()
 
-	// close OVS instance
-	t.logger.Info("Close: closing OVS instance")
-	ovsStart := time.Now()
-	if err := ovs.CloseOvsInstance(t.prjID); err != nil {
-		t.logger.Warnf("Error when closing ovswitch instance: %v", err)
+	// close OVS instance if this project created one
+	if t.ovsInstance != nil {
+		t.logger.Info("Close: closing OVS instance")
+		ovsStart := time.Now()
+		if err := ovs.CloseOvsInstance(t.prjID); err != nil {
+			t.logger.Warnf("Error when closing ovswitch instance: %v", err)
+		}
+		t.ovsInstance = nil
+		t.logger.Infof("Close: OVS done in %s", time.Since(ovsStart))
 	}
-	t.ovsInstance = nil
-	t.logger.Infof("Close: OVS done in %s", time.Since(ovsStart))
 
 	// close mgnt network
 	if t.mgntNet != nil {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mroy31/gonetem/internal/link"
@@ -19,6 +21,219 @@ const (
 func skipUnlessRoot(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("Test requires root privileges.")
+	}
+}
+
+func TestDockerNode_DetachInterface(t *testing.T) {
+	node := &DockerNode{Interfaces: make(map[string]*DockerInterface)}
+	node.Interfaces["eth0"] = &DockerInterface{State: link.IFSTATE_UP}
+
+	if err := node.DetachInterface("eth0"); err != nil {
+		t.Fatalf("DetachInterface returned an error: %v", err)
+	}
+	if _, ok := node.Interfaces["eth0"]; ok {
+		t.Fatal("interface was not removed from bookkeeping")
+	}
+}
+
+func TestDockerNode_InterfaceMapConcurrentAccess(t *testing.T) {
+	node := &DockerNode{Interfaces: make(map[string]*DockerInterface)}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = node.AttachInterface("eth0", 0, false)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = node.GetInterfacesState()
+			_ = node.IsRunning()
+		}()
+	}
+	wg.Wait()
+}
+
+func TestDockerNode_ResolvePidCachesResult(t *testing.T) {
+	node := &DockerNode{}
+	calls := 0
+	resolver := func() (int, error) {
+		calls++
+		return 4242, nil
+	}
+
+	pid, err := node.resolvePid(resolver)
+	if err != nil {
+		t.Fatalf("first resolvePid returned an error: %v", err)
+	}
+	if pid != 4242 {
+		t.Fatalf("unexpected pid: %d", pid)
+	}
+	if calls != 1 {
+		t.Fatalf("resolver called %d times, want 1", calls)
+	}
+
+	pid, err = node.resolvePid(resolver)
+	if err != nil {
+		t.Fatalf("second resolvePid returned an error: %v", err)
+	}
+	if pid != 4242 {
+		t.Fatalf("unexpected cached pid: %d", pid)
+	}
+	if calls != 1 {
+		t.Fatalf("resolver called %d times after cache hit, want 1", calls)
+	}
+}
+
+func TestDockerNode_InvalidatePid(t *testing.T) {
+	node := &DockerNode{pid: 4242}
+
+	node.invalidatePid()
+
+	if node.pid != 0 {
+		t.Fatalf("pid was not invalidated: %d", node.pid)
+	}
+}
+
+func TestDockerNode_GetRunningNetnsUsesCachedPid(t *testing.T) {
+	// A cached PID must be used without falling back to Docker inspection.
+	// Using the test process PID proves the cached path resolves a namespace
+	// while the node has no container ID.
+	node := &DockerNode{pid: os.Getpid()}
+
+	ns, err := node.GetRunningNetns()
+	if err != nil {
+		t.Fatalf("GetRunningNetns returned an error: %v", err)
+	}
+	defer ns.Close()
+}
+
+func BenchmarkDockerNode_RunCommandPidCache(b *testing.B) {
+	if os.Getuid() != 0 {
+		b.Skip("Benchmark requires root privileges.")
+	}
+
+	options.InitServerConfig()
+	node, err := NewDockerNode(utils.RandString(4), "host", DockerNodeOptions{
+		Name: utils.RandString(6),
+	})
+	if err != nil {
+		b.Fatalf("Unable to create docker node: %v", err)
+	}
+	defer node.Close()
+
+	if err := node.Start(); err != nil {
+		b.Fatalf("Unable to start docker node: %v", err)
+	}
+
+	cmd := []string{"sh", "-c", "true"}
+
+	b.Run("cached_pid", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if _, _, code, err := node.RunCommand(cmd); err != nil || code != 0 {
+				b.Fatalf("RunCommand failed: code=%d err=%v", code, err)
+			}
+		}
+	})
+
+	b.Run("inspect_each_call", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			node.invalidatePid()
+			if _, _, code, err := node.RunCommand(cmd); err != nil || code != 0 {
+				b.Fatalf("RunCommand failed: code=%d err=%v", code, err)
+			}
+		}
+	})
+}
+
+func TestInterfacePreparationScriptBatchesInterfaces(t *testing.T) {
+	script, ok := interfacePreparationScript([]string{"eth0", "eth1", "mgnt"}, true, true)
+	if !ok {
+		t.Fatal("expected preparation work")
+	}
+	if got := strings.Count(script, "ethtool -K"); got != 2 {
+		t.Fatalf("expected 2 ethtool commands, got %d:\n%s", got, script)
+	}
+	if got := strings.Count(script, "sysctl -w"); got != 2 {
+		t.Fatalf("expected 2 sysctl commands, got %d:\n%s", got, script)
+	}
+	if strings.Contains(script, "mgnt") {
+		t.Fatalf("management interface should not be prepared:\n%s", script)
+	}
+	if !strings.Contains(script, "exit $rc") {
+		t.Fatalf("script does not aggregate exit status:\n%s", script)
+	}
+
+	if _, ok := interfacePreparationScript([]string{"mgnt"}, false, false); ok {
+		t.Fatal("expected no preparation work")
+	}
+}
+
+func TestVRRPInterfaceNameIncludesGroup(t *testing.T) {
+	first := vrrpInterfaceName(0, 1)
+	second := vrrpInterfaceName(0, 2)
+	if first == second {
+		t.Fatalf("VRRP interfaces for different groups collide: %s", first)
+	}
+	if first != "vrrp-0-1" || second != "vrrp-0-2" {
+		t.Fatalf("unexpected VRRP interface names: %s %s", first, second)
+	}
+}
+
+func TestDockerNode_LazyCreation(t *testing.T) {
+	options.InitServerConfig()
+	node, err := NewDockerNode(utils.RandString(4), "host", DockerNodeOptions{
+		Name:       utils.RandString(6),
+		LazyCreate: true,
+	})
+	if err != nil {
+		t.Fatalf("Unable to create node: %v", err)
+	}
+	if node.ID != "" {
+		t.Fatal("lazy node was created immediately")
+	}
+
+	if err := node.Start(); err != nil {
+		t.Fatalf("Start returned an error: %v", err)
+	}
+	if node.ID == "" {
+		t.Fatal("container was not created on Start")
+	}
+	if !node.IsRunning() {
+		t.Fatal("node is not running after Start")
+	}
+
+	if err := node.Close(); err != nil {
+		t.Fatalf("Close returned an error: %v", err)
+	}
+}
+
+func TestDockerNode_StartStopWithoutInterfaces(t *testing.T) {
+	options.InitServerConfig()
+	prjID := utils.RandString(4)
+	node, err := NewDockerNode(prjID, "host", DockerNodeOptions{
+		Name: utils.RandString(6),
+	})
+	if err != nil {
+		t.Fatalf("Unable to create node: %v", err)
+	}
+	defer node.Close()
+
+	if err := node.Start(); err != nil {
+		t.Fatalf("Start returned an error: %v", err)
+	}
+	if !node.IsRunning() {
+		t.Fatal("node is not running after Start")
+	}
+
+	if err := node.Stop(); err != nil {
+		t.Fatalf("Stop returned an error: %v", err)
+	}
+	if node.IsRunning() {
+		t.Fatal("node is still running after Stop")
 	}
 }
 

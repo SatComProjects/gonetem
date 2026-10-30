@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"regexp"
@@ -9,6 +10,7 @@ import (
 	"github.com/moby/term"
 	"github.com/mroy31/gonetem/internal/docker"
 	"github.com/mroy31/gonetem/internal/link"
+	"github.com/mroy31/gonetem/internal/namespace"
 	"github.com/mroy31/gonetem/internal/ovs"
 	"github.com/vishvananda/netns"
 )
@@ -90,12 +92,13 @@ type INetemNode interface {
 	GetInterfaceName(ifIndex int) string
 	AttachMgntInterface(ifName string, ns netns.NsHandle, IPAddress string) error
 	AttachInterface(ifName string, ifIndex int, configure bool) error
+	DetachInterface(ifName string) error
 	ConfigureInterfaces() error
 	LoadConfig(confPath string, timeout int) ([]string, error)
-	ExecCommand(cmd []string, in io.ReadCloser, out io.Writer, tty bool, ttyHeight uint, ttyWidth uint, resizeCh chan term.Winsize) error
+	ExecCommand(ctx context.Context, cmd []string, in io.ReadCloser, out io.Writer, tty bool, ttyHeight uint, ttyWidth uint, resizeCh chan term.Winsize) error
 	RunCommand(cmd []string) ([]byte, []byte, int, error)
 	GetConsoleCmd(shell bool) ([]string, error)
-	Capture(ifIndex int, out io.Writer) error
+	Capture(ctx context.Context, ifIndex int, out io.Writer) error
 	CopyFrom(srcPath, destPath string) error
 	CopyTo(srcPath, destPath string) error
 	ReadConfigFiles(confDir string, timeout int) (map[string][]byte, error)
@@ -108,18 +111,19 @@ type INetemNode interface {
 
 func CreateNode(prjID string, name string, shortName string, config NodeConfig) (INetemNode, error) {
 	// first test if it is a docker node
-	re := regexp.MustCompile(`^docker.(\w+)$`)
+	re := regexp.MustCompile(`^docker\.(\w+)$`)
 	groups := re.FindStringSubmatch(config.Type)
 	if len(groups) == 2 {
 		// Create docker node
 		options := docker.DockerNodeOptions{
-			Name:      name,
-			ShortName: shortName,
-			Ipv6:      config.IPv6,
-			Mpls:      config.Mpls,
-			Vrfs:      config.Vrfs,
-			Volumes:   config.Volumes,
-			Image:     config.Image,
+			Name:       name,
+			ShortName:  shortName,
+			Ipv6:       config.IPv6,
+			Mpls:       config.Mpls,
+			Vrfs:       config.Vrfs,
+			Volumes:    config.Volumes,
+			Image:      config.Image,
+			LazyCreate: !config.Launch,
 		}
 		for _, group := range config.Vrrps {
 			options.Vrrps = append(options.Vrrps, docker.VrrpOptions{
@@ -135,6 +139,11 @@ func CreateNode(prjID string, name string, shortName string, config NodeConfig) 
 	// then test if it is a switch
 	if config.Type == "ovs" {
 		return ovs.NewOvsNode(prjID, name, shortName)
+	}
+
+	// finally test if it is a pure network namespace
+	if config.Type == "namespace" {
+		return namespace.NewNamespaceNode(prjID, name, shortName), nil
 	}
 
 	return nil, fmt.Errorf("unknown node type '%s'", config.Type)

@@ -10,6 +10,9 @@ service Netem {
     rpc ServerGetVersion(google.protobuf.Empty) returns (VersionResponse) {}
     rpc ServerPullImages(google.protobuf.Empty) returns (stream PullSrvMsg) {}
     rpc ServerCleanContainers(google.protobuf.Empty) returns (AckResponse) {}
+    // ServerUpdate pulls the latest version of gonetem, builds it and installs
+    // it on the server. The server must be restarted to use the new version.
+    rpc ServerUpdate(google.protobuf.Empty) returns (stream UpdateSrvMsg) {}
 
     // Project actions
     rpc ProjectGetMany(google.protobuf.Empty) returns (PrjListResponse) {}
@@ -130,6 +133,19 @@ message PullSrvMsg {
     Code code = 1;
     string image = 2;
     string error = 3;
+}
+
+message UpdateSrvMsg {
+    enum Code {
+        START = 0;
+        LOG = 1;
+        OK = 2;
+        ERROR = 3;
+    }
+
+    Code code = 1;
+    string step = 2;
+    string message = 3;
 }
 
 message CaptureSrvMsg {

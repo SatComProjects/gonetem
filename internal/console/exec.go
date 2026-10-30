@@ -7,12 +7,25 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/moby/term"
 	"github.com/mroy31/gonetem/internal/proto"
 	"golang.org/x/sys/unix"
 )
+
+type execSender struct {
+	mu     sync.Mutex
+	stream proto.Netem_NodeExecClient
+}
+
+func (s *execSender) Send(msg *proto.ExecCltMsg) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stream.Send(msg)
+}
 
 func termGetTtySize(terminalFd uintptr) (int, int) {
 	ws, err := term.GetWinsize(terminalFd)
@@ -22,32 +35,38 @@ func termGetTtySize(terminalFd uintptr) (int, int) {
 	return int(ws.Height), int(ws.Width)
 }
 
-func termResizeTty(stream proto.Netem_NodeExecClient, terminalFd uintptr) error {
+func termResizeTty(sender *execSender, terminalFd uintptr) error {
 	height, width := termGetTtySize(terminalFd)
 	if height == 0 && width == 0 {
 		return nil
 	}
-	return stream.Send(&proto.ExecCltMsg{
+	return sender.Send(&proto.ExecCltMsg{
 		Code:      proto.ExecCltMsg_RESIZE,
 		TtyWidth:  int32(width),
 		TtyHeight: int32(height),
 	})
 }
 
-func termMonitorTty(stream proto.Netem_NodeExecClient, terminalFd uintptr) {
+func termMonitorTty(sender *execSender, terminalFd uintptr, done <-chan struct{}) {
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGWINCH)
 	signal.Notify(sigchan, syscall.SIGHUP)
 	go func() {
-		for sig := range sigchan {
-			switch sig {
-			case syscall.SIGWINCH:
-				termResizeTty(stream, terminalFd)
-			case syscall.SIGHUP:
-				// terminal has been closed, send exit to
-				stream.Send(&proto.ExecCltMsg{
-					Code: proto.ExecCltMsg_CLOSE,
-				})
+		defer signal.Stop(sigchan)
+		for {
+			select {
+			case <-done:
+				return
+			case sig := <-sigchan:
+				switch sig {
+				case syscall.SIGWINCH:
+					_ = termResizeTty(sender, terminalFd)
+				case syscall.SIGHUP:
+					// terminal has been closed, send exit to
+					_ = sender.Send(&proto.ExecCltMsg{
+						Code: proto.ExecCltMsg_CLOSE,
+					})
+				}
 			}
 		}
 	}()
@@ -87,8 +106,9 @@ func nodeExec(
 	}
 	defer stream.CloseSend()
 
+	sender := &execSender{stream: stream}
 	tHeight, tWidth := termGetTtySize(terminalFd)
-	if err := stream.Send(&proto.ExecCltMsg{
+	if err := sender.Send(&proto.ExecCltMsg{
 		Code:      proto.ExecCltMsg_CMD,
 		PrjId:     prjId,
 		Node:      node,
@@ -102,7 +122,7 @@ func nodeExec(
 
 	inputDone := make(chan error)
 	outputDone := make(chan error)
-	outputClosed := false
+	var outputClosed atomic.Bool
 
 	// read stdin
 	go func() {
@@ -120,7 +140,7 @@ func nodeExec(
 				continue
 			}
 
-			if outputClosed {
+			if outputClosed.Load() {
 				inputDone <- nil
 				return
 			}
@@ -138,7 +158,7 @@ func nodeExec(
 					return
 				}
 
-				if err := stream.Send(&proto.ExecCltMsg{
+				if err := sender.Send(&proto.ExecCltMsg{
 					Code: proto.ExecCltMsg_DATA,
 					Data: data[:n],
 				}); err != nil {
@@ -193,11 +213,13 @@ func nodeExec(
 		}
 	}()
 
-	termMonitorTty(stream, terminalFd)
+	monitorDone := make(chan struct{})
+	defer close(monitorDone)
+	termMonitorTty(sender, terminalFd, monitorDone)
 
 	// wait output to finish
 	err = <-outputDone
-	outputClosed = true
+	outputClosed.Store(true)
 
 	// wait input to finish
 	<-inputDone

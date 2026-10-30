@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sync"
 	"time"
 
 	"github.com/mroy31/gonetem/internal/options"
@@ -28,10 +29,15 @@ type NetemProject struct {
 }
 
 var (
-	openProjects = make(map[string]*NetemProject, 0)
+	openProjects = make(map[string]*NetemProject)
+	projectsMu   sync.RWMutex
+	projectOpsMu sync.Mutex
 )
 
 func ProjectIsExist(prjName string) bool {
+	projectsMu.RLock()
+	defer projectsMu.RUnlock()
+
 	for _, prj := range openProjects {
 		if prj.Name == prjName {
 			return true
@@ -41,27 +47,37 @@ func ProjectIsExist(prjName string) bool {
 }
 
 func ProjectIsIdExist(prjID string) bool {
-	for _, prj := range openProjects {
-		if prj.Id == prjID {
-			return true
-		}
-	}
-	return false
+	projectsMu.RLock()
+	defer projectsMu.RUnlock()
+	_, found := openProjects[prjID]
+	return found
 }
 
 func ProjectGetMany() map[string]*NetemProject {
-	return openProjects
+	projectsMu.RLock()
+	defer projectsMu.RUnlock()
+
+	snapshot := make(map[string]*NetemProject, len(openProjects))
+	for id, prj := range openProjects {
+		snapshot[id] = prj
+	}
+	return snapshot
 }
 
 func ProjectGetOne(prjID string) *NetemProject {
-	prj, found := openProjects[prjID]
-	if found {
-		return prj
-	}
-	return nil
+	projectsMu.RLock()
+	defer projectsMu.RUnlock()
+	return openProjects[prjID]
 }
 
 func ProjectOpen(prjId, name string, data []byte) (*NetemProject, error) {
+	projectOpsMu.Lock()
+	defer projectOpsMu.Unlock()
+
+	if ProjectIsExist(name) {
+		return nil, fmt.Errorf("a project named %s is already open", name)
+	}
+
 	// create temp directory for the project
 	dir, err := os.MkdirTemp(options.ServerConfig.Workdir, "gonetem-"+prjId+"-")
 	if err != nil {
@@ -69,16 +85,15 @@ func ProjectOpen(prjId, name string, data []byte) (*NetemProject, error) {
 	}
 
 	if err := utils.OpenArchive(dir, bytes.NewReader(data)); err != nil {
+		os.RemoveAll(dir)
 		return nil, fmt.Errorf("unable to open project: %w", err)
 	}
 
 	// load the topology
 	topology, err := LoadTopology(prjId, dir)
 	if err != nil {
-		defer func() {
-			topology.Close(nil)
-			os.RemoveAll(dir)
-		}()
+		topology.Close(nil)
+		os.RemoveAll(dir)
 		return nil, err
 	}
 
@@ -89,11 +104,23 @@ func ProjectOpen(prjId, name string, data []byte) (*NetemProject, error) {
 		OpenAt:   time.Now(),
 		Topology: topology,
 	}
+
+	projectsMu.Lock()
+	defer projectsMu.Unlock()
+	if _, found := openProjects[prjId]; found {
+		topology.Close(nil)
+		os.RemoveAll(dir)
+		return nil, fmt.Errorf("project id %s is already open", prjId)
+	}
 	openProjects[prjId] = prj
+
 	return prj, nil
 }
 
 func ProjectSave(prjId string, progressCh chan TopologySaveProgressT) (*bytes.Buffer, error) {
+	projectOpsMu.Lock()
+	defer projectOpsMu.Unlock()
+
 	project := ProjectGetOne(prjId)
 	if project == nil {
 		return nil, &ProjectNotFoundError{prjId}
@@ -111,6 +138,9 @@ func ProjectSave(prjId string, progressCh chan TopologySaveProgressT) (*bytes.Bu
 }
 
 func ProjectGetNodeConfigs(prjId string) (*bytes.Buffer, error) {
+	projectOpsMu.Lock()
+	defer projectOpsMu.Unlock()
+
 	project := ProjectGetOne(prjId)
 	if project == nil {
 		return nil, &ProjectNotFoundError{prjId}
@@ -130,13 +160,20 @@ func ProjectGetNodeConfigs(prjId string) (*bytes.Buffer, error) {
 }
 
 func ProjectClose(prjId string, progressCh chan TopologyRunCloseProgressT) error {
+	projectOpsMu.Lock()
+	defer projectOpsMu.Unlock()
+
 	project := ProjectGetOne(prjId)
 	if project == nil {
 		return &ProjectNotFoundError{prjId}
 	}
 
-	defer os.RemoveAll(project.Dir)
-	defer delete(openProjects, prjId)
+	err := project.Topology.Close(progressCh)
 
-	return project.Topology.Close(progressCh)
+	projectsMu.Lock()
+	delete(openProjects, prjId)
+	projectsMu.Unlock()
+
+	os.RemoveAll(project.Dir)
+	return err
 }

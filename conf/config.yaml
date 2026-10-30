@@ -22,3 +22,9 @@ docker:
    - type: gndstation
      image: jariassuarez/sgnt:ground-station
      volumes: []
+update:
+  enabled: true
+  repository: https://github.com/satcomprojects/gonetem
+  branch: master
+  goVersion: "1.24.0"
+  workdir: ""

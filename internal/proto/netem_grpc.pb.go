@@ -23,6 +23,7 @@ const (
 	Netem_ServerGetVersion_FullMethodName      = "/netem.Netem/ServerGetVersion"
 	Netem_ServerPullImages_FullMethodName      = "/netem.Netem/ServerPullImages"
 	Netem_ServerCleanContainers_FullMethodName = "/netem.Netem/ServerCleanContainers"
+	Netem_ServerUpdate_FullMethodName          = "/netem.Netem/ServerUpdate"
 	Netem_ProjectGetMany_FullMethodName        = "/netem.Netem/ProjectGetMany"
 	Netem_ProjectOpen_FullMethodName           = "/netem.Netem/ProjectOpen"
 	Netem_ProjectClose_FullMethodName          = "/netem.Netem/ProjectClose"
@@ -62,6 +63,7 @@ type NetemClient interface {
 	ServerGetVersion(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*VersionResponse, error)
 	ServerPullImages(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PullSrvMsg], error)
 	ServerCleanContainers(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*AckResponse, error)
+	ServerUpdate(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[UpdateSrvMsg], error)
 	// Project actions
 	ProjectGetMany(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*PrjListResponse, error)
 	ProjectOpen(ctx context.Context, in *OpenRequest, opts ...grpc.CallOption) (*PrjOpenResponse, error)
@@ -142,6 +144,25 @@ func (c *netemClient) ServerPullImages(ctx context.Context, in *empty.Empty, opt
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Netem_ServerPullImagesClient = grpc.ServerStreamingClient[PullSrvMsg]
 
+func (c *netemClient) ServerUpdate(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[UpdateSrvMsg], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[1], Netem_ServerUpdate_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[empty.Empty, UpdateSrvMsg]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Netem_ServerUpdateClient = grpc.ServerStreamingClient[UpdateSrvMsg]
+
 func (c *netemClient) ServerCleanContainers(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*AckResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AckResponse)
@@ -174,7 +195,7 @@ func (c *netemClient) ProjectOpen(ctx context.Context, in *OpenRequest, opts ...
 
 func (c *netemClient) ProjectClose(ctx context.Context, in *ProjectRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProjectCloseMsg], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[1], Netem_ProjectClose_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[2], Netem_ProjectClose_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +214,7 @@ type Netem_ProjectCloseClient = grpc.ServerStreamingClient[ProjectCloseMsg]
 
 func (c *netemClient) ProjectSave(ctx context.Context, in *ProjectRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProjectSaveMsg], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[2], Netem_ProjectSave_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[3], Netem_ProjectSave_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +283,7 @@ func (c *netemClient) TopologyCheck(ctx context.Context, in *ProjectRequest, opt
 
 func (c *netemClient) TopologyReload(ctx context.Context, in *ProjectRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TopologyRunMsg], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[3], Netem_TopologyReload_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[4], Netem_TopologyReload_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +302,7 @@ type Netem_TopologyReloadClient = grpc.ServerStreamingClient[TopologyRunMsg]
 
 func (c *netemClient) TopologyRun(ctx context.Context, in *ProjectRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TopologyRunMsg], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[4], Netem_TopologyRun_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[5], Netem_TopologyRun_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +411,7 @@ func (c *netemClient) NodeSetIfState(ctx context.Context, in *NodeIfStateRequest
 
 func (c *netemClient) NodeCapture(ctx context.Context, in *NodeInterfaceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CaptureSrvMsg], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[5], Netem_NodeCapture_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[6], Netem_NodeCapture_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +430,7 @@ type Netem_NodeCaptureClient = grpc.ServerStreamingClient[CaptureSrvMsg]
 
 func (c *netemClient) NodeCopyFrom(ctx context.Context, in *CopyMsg, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CopyMsg], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[6], Netem_NodeCopyFrom_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[7], Netem_NodeCopyFrom_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +449,7 @@ type Netem_NodeCopyFromClient = grpc.ServerStreamingClient[CopyMsg]
 
 func (c *netemClient) NodeCopyTo(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[CopyMsg, AckResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[7], Netem_NodeCopyTo_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[8], Netem_NodeCopyTo_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +482,7 @@ func (c *netemClient) NodeRun(ctx context.Context, in *NodeRunRequest, opts ...g
 
 func (c *netemClient) NodeExec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecCltMsg, ExecSrvMsg], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[8], Netem_NodeExec_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Netem_ServiceDesc.Streams[9], Netem_NodeExec_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -510,6 +531,7 @@ type NetemServer interface {
 	ServerGetVersion(context.Context, *empty.Empty) (*VersionResponse, error)
 	ServerPullImages(*empty.Empty, grpc.ServerStreamingServer[PullSrvMsg]) error
 	ServerCleanContainers(context.Context, *empty.Empty) (*AckResponse, error)
+	ServerUpdate(*empty.Empty, grpc.ServerStreamingServer[UpdateSrvMsg]) error
 	// Project actions
 	ProjectGetMany(context.Context, *empty.Empty) (*PrjListResponse, error)
 	ProjectOpen(context.Context, *OpenRequest) (*PrjOpenResponse, error)
@@ -569,6 +591,9 @@ func (UnimplementedNetemServer) ServerPullImages(*empty.Empty, grpc.ServerStream
 }
 func (UnimplementedNetemServer) ServerCleanContainers(context.Context, *empty.Empty) (*AckResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ServerCleanContainers not implemented")
+}
+func (UnimplementedNetemServer) ServerUpdate(*empty.Empty, grpc.ServerStreamingServer[UpdateSrvMsg]) error {
+	return status.Error(codes.Unimplemented, "method ServerUpdate not implemented")
 }
 func (UnimplementedNetemServer) ProjectGetMany(context.Context, *empty.Empty) (*PrjListResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ProjectGetMany not implemented")
@@ -706,6 +731,17 @@ func _Netem_ServerPullImages_Handler(srv interface{}, stream grpc.ServerStream) 
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Netem_ServerPullImagesServer = grpc.ServerStreamingServer[PullSrvMsg]
+
+func _Netem_ServerUpdate_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(empty.Empty)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NetemServer).ServerUpdate(m, &grpc.GenericServerStream[empty.Empty, UpdateSrvMsg]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Netem_ServerUpdateServer = grpc.ServerStreamingServer[UpdateSrvMsg]
 
 func _Netem_ServerCleanContainers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(empty.Empty)
@@ -1287,6 +1323,11 @@ var Netem_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ServerPullImages",
 			Handler:       _Netem_ServerPullImages_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ServerUpdate",
+			Handler:       _Netem_ServerUpdate_Handler,
 			ServerStreams: true,
 		},
 		{

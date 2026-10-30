@@ -292,7 +292,7 @@ func (p *NetemPrompt) Execute(s string) {
 		for name, cmd := range p.commands {
 			fmt.Println(color.BlueString(name))
 			fmt.Println("  " + cmd.Desc)
-			fmt.Println("  Usage: " + cmd.Desc)
+			fmt.Println("  Usage: " + cmd.Usage)
 		}
 		return
 	}
@@ -300,6 +300,9 @@ func (p *NetemPrompt) Execute(s string) {
 	args, err := shlex.Split(s)
 	if err != nil {
 		RedPrintf("Bad command line: %v", err)
+		return
+	}
+	if len(args) == 0 {
 		return
 	}
 
@@ -386,6 +389,7 @@ func (p *NetemPrompt) CopyFrom(srcNode, srcPath, destPath string) {
 	file, err := os.Create(destPath)
 	if err != nil {
 		RedPrintf("Unable to create/open %s: %v\n", destPath, err)
+		return
 	}
 	defer file.Close()
 
@@ -419,7 +423,10 @@ func (p *NetemPrompt) CopyFrom(srcNode, srcPath, destPath string) {
 
 		switch msg.GetCode() {
 		case proto.CopyMsg_DATA:
-			file.Write(msg.GetData())
+			if _, err := file.Write(msg.GetData()); err != nil {
+				RedPrintf("Unable to write %s: %v\n", destPath, err)
+				return
+			}
 		case proto.CopyMsg_ERROR:
 			RedPrintf("CopyFrom %s:%s returns an error: %s\n", srcNode, srcPath, string(msg.GetData()))
 		}
