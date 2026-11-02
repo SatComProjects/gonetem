@@ -116,9 +116,44 @@ Request: ``LinkUpdateManyRequest``
 
 Response: ``LinkUpdateManyResponse``
 
-The server takes the topology write lock once, updates all link configs, groups
-qdisc operations by node, enters each node namespace once, and uses one
+The server takes the topology lock once (the read side for non-sync batches,
+so concurrent link adds/deletes are not blocked), updates all link configs,
+groups qdisc operations by node, enters each node namespace once, and uses one
 rtnetlink session per node. Per-link failures are returned in
 ``LinkUpdateResult.status``; other links are still applied. Results preserve
 request order and include the peer names and server-side duration. With
 ``sync`` set, the topology file is written once after the batch.
+
+LinkSyncMany
+------------
+
+Apply a burst of link adds, deletes and QoS updates in one request.
+
+Request: ``LinkSyncManyRequest``
+
+.. code-block:: protobuf
+
+    message LinkSyncManyRequest {
+        string prjId = 1;
+        repeated LinkSyncOperation operations = 2;
+        bool sync = 3;
+    }
+
+    message LinkSyncOperation {
+        LinkSyncAction action = 1; // LINK_SYNC_ADD, LINK_SYNC_DEL, LINK_SYNC_UPDATE
+        LinkConfig link = 2;
+    }
+
+Response: ``LinkSyncManyResponse``
+
+The server takes the topology lock once, then executes the batch in three
+phases: deletes, adds and updates. This ordering lets a client replace a link
+in a single request. All operations share one node namespace cache, kernel work
+runs in a bounded worker pool (``docker.linkConcurrency``, default 30), and the
+topology file is written at most once at the end when ``sync`` is ``true``.
+
+Duplicate operations for the same link and action are rejected instead of
+being applied in a nondeterministic order. Per-operation failures are reported
+in ``LinkSyncResult.status`` without aborting the rest of the batch. Results
+preserve request order, and ``added``/``deleted``/``updated`` count the
+successful operations of each kind.

@@ -508,6 +508,18 @@ type NetemTopologyManager struct {
 	logger      *logrus.Entry
 	mu          sync.RWMutex
 	opMu        sync.RWMutex
+	// linkIndex maps an unordered peer key to a link. It mirrors t.links and
+	// is guarded by t.mu. A nil index means the manager was built directly in
+	// tests; getLinkLocked falls back to the linear scan in that case.
+	linkIndex map[linkKey]*NetemLink
+	// pendingLinks reserves peer keys for in-flight add/delete operations so
+	// two concurrent operations cannot create or remove the same link.
+	pendingLinks map[linkKey]struct{}
+	// updateBatchMu serializes LinkUpdateMany batches between themselves. A
+	// batch holds several NetemLink.mu locks at once, so two batches touching
+	// the same links in opposite order could deadlock. Adds/deletes do not take
+	// this mutex and remain concurrent with updates.
+	updateBatchMu sync.Mutex
 	// qosBatchApplier is injectable for tests. Production uses link.ApplyQoSBatch.
 	qosBatchApplier func(netns.NsHandle, []link.QoSOperation) ([]link.QoSOperationResult, error)
 	syncMu          sync.Mutex
@@ -572,16 +584,26 @@ func (t *NetemTopologyManager) SynchroniseTopology() error {
 		Bridges: make(map[string]BridgeConfig),
 	}
 
-	for _, node := range t.nodes {
-		topo.Nodes[node.Instance.GetName()] = node.Config
+	// Snapshot under the topology read lock so a concurrent add/delete/update
+	// cannot change the slices while they are being serialized. Nested slices
+	// are copied as well: writers mutate them in place.
+	t.mu.RLock()
+	for idx := range t.nodes {
+		cfg := t.nodes[idx].Config
+		cfg.Volumes = append([]string(nil), cfg.Volumes...)
+		cfg.Vrfs = append([]string(nil), cfg.Vrfs...)
+		cfg.Vrrps = append([]VrrpOptions(nil), cfg.Vrrps...)
+		topo.Nodes[t.nodes[idx].Instance.GetName()] = cfg
 	}
 
-	for _, link := range t.links {
-		topo.Links = append(topo.Links, link.Config)
+	for _, l := range t.links {
+		topo.Links = append(topo.Links, l.Config)
 	}
 
 	for _, bridge := range t.bridges {
-		topo.Bridges[bridge.ConfigName] = bridge.Config
+		cfg := bridge.Config
+		cfg.Interfaces = append([]string(nil), cfg.Interfaces...)
+		topo.Bridges[bridge.ConfigName] = cfg
 	}
 
 	if t.mgntNet != nil {
@@ -590,6 +612,7 @@ func (t *NetemTopologyManager) SynchroniseTopology() error {
 			Address: t.mgntNet.IPAddress,
 		}
 	}
+	t.mu.RUnlock()
 
 	data, err := yaml.Marshal(topo)
 	if err != nil {
@@ -719,6 +742,8 @@ func (t *NetemTopologyManager) Load() error {
 	}
 	t.mu.Lock()
 	t.links = newLinks
+	t.linkIndex = nil
+	t.ensureLinkIndexLocked()
 	t.mu.Unlock()
 	t.logger.Debugf("Load: built %d links in %s", len(newLinks), time.Since(linkBuildStart))
 
@@ -1198,7 +1223,117 @@ func (t *NetemTopologyManager) GetLink(peer1V string, peer2V string) (*NetemLink
 	return t.getLinkLocked(peer1V, peer2V)
 }
 
+// linkKey is an order-independent identity for a link. Peer strings are
+// normalized to "<node>.<ifIndex>" so "A.00" and "A.0" cannot create two
+// entries for the same interface.
+type linkKey struct {
+	peer1 string
+	peer2 string
+}
+
+func normalizePeer(peer string) (string, error) {
+	name, idx, err := splitPeer(peer)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s.%d", name, idx), nil
+}
+
+func linkKeyFor(peer1V string, peer2V string) (linkKey, error) {
+	peer1, err := normalizePeer(peer1V)
+	if err != nil {
+		return linkKey{}, err
+	}
+	peer2, err := normalizePeer(peer2V)
+	if err != nil {
+		return linkKey{}, err
+	}
+	if peer1 > peer2 {
+		peer1, peer2 = peer2, peer1
+	}
+	return linkKey{peer1: peer1, peer2: peer2}, nil
+}
+
+func linkKeyOf(l *NetemLink) (linkKey, error) {
+	if l.Peer1.Node == nil || l.Peer2.Node == nil {
+		return linkKey{}, fmt.Errorf("link has a peer without a node")
+	}
+	return linkKeyFor(
+		fmt.Sprintf("%s.%d", l.Peer1.Node.GetName(), l.Peer1.IfIndex),
+		fmt.Sprintf("%s.%d", l.Peer2.Node.GetName(), l.Peer2.IfIndex),
+	)
+}
+
+// ensureLinkIndexLocked builds the peer index from t.links when it is absent.
+// Callers must hold t.mu for writing.
+func (t *NetemTopologyManager) ensureLinkIndexLocked() {
+	if t.linkIndex != nil {
+		return
+	}
+	t.linkIndex = make(map[linkKey]*NetemLink, len(t.links))
+	for _, l := range t.links {
+		key, err := linkKeyOf(l)
+		if err != nil {
+			continue
+		}
+		t.linkIndex[key] = l
+	}
+}
+
+// removeLinkLocked removes target from t.links by pointer identity and drops
+// its index entry. Callers must hold t.mu for writing.
+func (t *NetemTopologyManager) removeLinkLocked(target *NetemLink) bool {
+	oldLen := len(t.links)
+	kept := t.links[:0]
+	found := false
+	for _, l := range t.links {
+		if l == target {
+			found = true
+			continue
+		}
+		kept = append(kept, l)
+	}
+	t.links = kept
+	// Drop references in the tail so a removed link can be collected.
+	for idx := len(kept); idx < oldLen; idx++ {
+		t.links[:oldLen][idx] = nil
+	}
+
+	if t.linkIndex != nil {
+		if key, err := linkKeyOf(target); err == nil && t.linkIndex[key] == target {
+			delete(t.linkIndex, key)
+		}
+	}
+	return found
+}
+
+func (t *NetemTopologyManager) linkInListLocked(target *NetemLink) bool {
+	for _, l := range t.links {
+		if l == target {
+			return true
+		}
+	}
+	return false
+}
+
 func (t *NetemTopologyManager) getLinkLocked(peer1V string, peer2V string) (*NetemLink, int, error) {
+	key, err := linkKeyFor(peer1V, peer2V)
+	if err != nil {
+		return nil, -1, err
+	}
+
+	if t.linkIndex != nil {
+		if l := t.linkIndex[key]; l != nil {
+			return l, -1, nil
+		}
+		return nil, -1, fmt.Errorf(
+			"link %s - %s not found in the topology",
+			peer1V, peer2V,
+		)
+	}
+
+	// Compatibility fallback for managers built directly in tests. Production
+	// managers always have an index built by Load or the link operations.
 	peer1Name, peer1Idx, err := splitPeer(peer1V)
 	if err != nil {
 		return nil, -1, err
@@ -1238,133 +1373,199 @@ func (t *NetemTopologyManager) LinkAdd(linkCfg LinkConfig, sync bool) error {
 		return err
 	}
 
-	t.opMu.Lock()
-	defer t.opMu.Unlock()
+	// Independent adds only mutate their own kernel interfaces and link state.
+	// Take the write side only when the topology file must be rewritten.
+	if sync {
+		t.opMu.Lock()
+		defer t.opMu.Unlock()
+	} else {
+		t.opMu.RLock()
+		defer t.opMu.RUnlock()
+	}
 
-	var link *NetemLink
-	var running bool
+	netnsCache := newNodeNetnsCache()
+	defer netnsCache.closeAll()
 
-	err := func() error {
-		t.mu.Lock()
-		defer t.mu.Unlock()
-
-		if _, _, err := t.getLinkLocked(linkCfg.Peer1, linkCfg.Peer2); err == nil {
-			return fmt.Errorf("this link already exist")
-		}
-
-		peer1Name, peer1Idx, err := splitPeer(linkCfg.Peer1)
-		if err != nil {
-			return err
-		}
-		peer2Name, peer2Idx, err := splitPeer(linkCfg.Peer2)
-		if err != nil {
-			return err
-		}
-
-		peer1Node := t.getNodeLocked(peer1Name)
-		if peer1Node == nil {
-			return fmt.Errorf("node %s not found in the topology", peer1Name)
-		}
-		peer2Node := t.getNodeLocked(peer2Name)
-		if peer2Node == nil {
-			return fmt.Errorf("node %s not found in the topology", peer2Name)
-		}
-
-		if linkCfg.Buffer == 0.0 && linkCfg.Rate > 0 {
-			// by default set limit buffer to 1.0 * BDP
-			linkCfg.Buffer = 1.0
-		}
-
-		link = &NetemLink{
-			Peer1: NetemLinkPeer{
-				Node:    peer1Node,
-				IfIndex: peer1Idx,
-			},
-			Peer2: NetemLinkPeer{
-				Node:    peer2Node,
-				IfIndex: peer2Idx,
-			},
-			HasPeer1Netem: false,
-			HasPeer2Netem: false,
-			HasPeer1Tbf:   false,
-			HasPeer2Tbf:   false,
-			Config:        linkCfg,
-		}
-		running = t.running
-		return nil
-	}()
-	if err != nil {
+	if err := t.linkAdd(linkCfg, netnsCache); err != nil {
 		return err
 	}
 
+	if sync {
+		return t.SynchroniseTopology()
+	}
+	return nil
+}
+
+// linkAdd creates one link. The caller must hold opMu (read or write side) and
+// pass a cache that remains valid for the whole operation.
+func (t *NetemTopologyManager) linkAdd(linkCfg LinkConfig, netnsCache *nodeNetnsCache) error {
+	t.mu.Lock()
+	t.ensureLinkIndexLocked()
+
+	key, err := linkKeyFor(linkCfg.Peer1, linkCfg.Peer2)
+	if err != nil {
+		t.mu.Unlock()
+		return err
+	}
+	if t.linkIndex[key] != nil {
+		t.mu.Unlock()
+		return fmt.Errorf("this link already exist")
+	}
+	if t.pendingLinks == nil {
+		t.pendingLinks = make(map[linkKey]struct{})
+	}
+	if _, pending := t.pendingLinks[key]; pending {
+		t.mu.Unlock()
+		return fmt.Errorf("link %s - %s is already being modified", linkCfg.Peer1, linkCfg.Peer2)
+	}
+
+	peer1Name, peer1Idx, err := splitPeer(linkCfg.Peer1)
+	if err != nil {
+		t.mu.Unlock()
+		return err
+	}
+	peer2Name, peer2Idx, err := splitPeer(linkCfg.Peer2)
+	if err != nil {
+		t.mu.Unlock()
+		return err
+	}
+
+	peer1Node := t.getNodeLocked(peer1Name)
+	if peer1Node == nil {
+		t.mu.Unlock()
+		return fmt.Errorf("node %s not found in the topology", peer1Name)
+	}
+	peer2Node := t.getNodeLocked(peer2Name)
+	if peer2Node == nil {
+		t.mu.Unlock()
+		return fmt.Errorf("node %s not found in the topology", peer2Name)
+	}
+
+	if linkCfg.Buffer == 0.0 && linkCfg.Rate > 0 {
+		// by default set limit buffer to 1.0 * BDP
+		linkCfg.Buffer = 1.0
+	}
+
+	l := &NetemLink{
+		Peer1: NetemLinkPeer{
+			Node:    peer1Node,
+			IfIndex: peer1Idx,
+		},
+		Peer2: NetemLinkPeer{
+			Node:    peer2Node,
+			IfIndex: peer2Idx,
+		},
+		HasPeer1Netem: false,
+		HasPeer2Netem: false,
+		HasPeer1Tbf:   false,
+		HasPeer2Tbf:   false,
+		Config:        linkCfg,
+	}
+	t.pendingLinks[key] = struct{}{}
+	running := t.running
+	t.mu.Unlock()
+
 	if running {
-		netnsCache := newNodeNetnsCache()
-		defer netnsCache.closeAll()
-		if err := t.setupLink(link, true, netnsCache); err != nil {
+		if err := t.setupLink(l, true, netnsCache); err != nil {
+			t.mu.Lock()
+			delete(t.pendingLinks, key)
+			t.mu.Unlock()
 			return err
 		}
 	}
 
 	t.mu.Lock()
-	t.links = append(t.links, link)
+	delete(t.pendingLinks, key)
+	t.links = append(t.links, l)
+	t.linkIndex[key] = l
 	t.mu.Unlock()
-
-	if sync {
-		return t.SynchroniseTopology()
-	}
 
 	return nil
 }
 
 func (t *NetemTopologyManager) LinkDel(linkCfg LinkConfig, sync bool) error {
-	t.opMu.Lock()
-	defer t.opMu.Unlock()
+	// Independent deletes can run concurrently; the write side is only needed
+	// when the topology file is rewritten.
+	if sync {
+		t.opMu.Lock()
+		defer t.opMu.Unlock()
+	} else {
+		t.opMu.RLock()
+		defer t.opMu.RUnlock()
+	}
 
-	var l *NetemLink
-	var idx int
-	var running bool
+	netnsCache := newNodeNetnsCache()
+	defer netnsCache.closeAll()
 
-	err := func() error {
-		t.mu.Lock()
-		defer t.mu.Unlock()
-
-		var err error
-		l, idx, err = t.getLinkLocked(linkCfg.Peer1, linkCfg.Peer2)
-		if err != nil {
-			return err
-		}
-		running = t.running
-		return nil
-	}()
-	if err != nil {
+	if err := t.linkDel(linkCfg, netnsCache); err != nil {
 		return err
 	}
+
+	if sync {
+		return t.SynchroniseTopology()
+	}
+	return nil
+}
+
+// linkDel removes one link. The caller must hold opMu (read or write side).
+func (t *NetemTopologyManager) linkDel(linkCfg LinkConfig, netnsCache *nodeNetnsCache) (err error) {
+	t.mu.Lock()
+	t.ensureLinkIndexLocked()
+
+	l, _, err := t.getLinkLocked(linkCfg.Peer1, linkCfg.Peer2)
+	if err != nil {
+		t.mu.Unlock()
+		return err
+	}
+	key, err := linkKeyOf(l)
+	if err != nil {
+		t.mu.Unlock()
+		return err
+	}
+
+	// Remove the link from the lookup index and reserve its key before doing
+	// kernel work. A concurrent add/delete/update must not pick the same link.
+	delete(t.linkIndex, key)
+	if t.pendingLinks == nil {
+		t.pendingLinks = make(map[linkKey]struct{})
+	}
+	t.pendingLinks[key] = struct{}{}
+	running := t.running
+	t.mu.Unlock()
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	defer func() {
+		t.mu.Lock()
+		delete(t.pendingLinks, key)
+		if err != nil && t.linkInListLocked(l) {
+			// The kernel teardown failed: keep the link visible as before.
+			t.linkIndex[key] = l
+		}
+		t.mu.Unlock()
+	}()
 
 	peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
 	peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
 
 	if running {
-		netnsCache := newNodeNetnsCache()
-		defer netnsCache.closeAll()
-		if err := t.deleteLink(l, netnsCache); err != nil {
+		if err = t.deleteLink(l, netnsCache); err != nil {
 			return err
 		}
 	}
 
-	if err := l.Peer1.Node.DetachInterface(peer1IfName); err != nil {
+	if err = l.Peer1.Node.DetachInterface(peer1IfName); err != nil {
 		return err
 	}
-	if err := l.Peer2.Node.DetachInterface(peer2IfName); err != nil {
+	if err = l.Peer2.Node.DetachInterface(peer2IfName); err != nil {
 		return err
 	}
 
 	t.mu.Lock()
-	t.links = append(t.links[:idx], t.links[idx+1:]...)
+	t.removeLinkLocked(l)
 	t.mu.Unlock()
 
-	if sync {
-		return t.SynchroniseTopology()
-	}
 	return nil
 }
 
@@ -1413,8 +1614,7 @@ func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
 	}
 
 	// Non-sync link updates only mutate per-link state and independent kernel
-	// interfaces, so they can run concurrently. Structural operations
-	// (LinkAdd/Del, NodeAdd/Del, Run/Reload) still take the write side.
+	// interfaces, so they can run concurrently with other link operations.
 	// Sync updates rewrite the topology file, so keep those exclusive.
 	if sync {
 		t.opMu.Lock()
@@ -1424,6 +1624,22 @@ func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
 		defer t.opMu.RUnlock()
 	}
 
+	netnsCache := newNodeNetnsCache()
+	defer netnsCache.closeAll()
+
+	if err := t.linkUpdate(linkCfg, netnsCache); err != nil {
+		return err
+	}
+
+	if sync {
+		return t.SynchroniseTopology()
+	}
+	return nil
+}
+
+// linkUpdate applies one QoS change. The caller must hold opMu (read or write
+// side) and pass a cache that remains valid for the whole operation.
+func (t *NetemTopologyManager) linkUpdate(linkCfg LinkConfig, netnsCache *nodeNetnsCache) error {
 	t.mu.RLock()
 	l, _, err := t.getLinkLocked(linkCfg.Peer1, linkCfg.Peer2)
 	t.mu.RUnlock()
@@ -1447,18 +1663,14 @@ func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
 	t.mu.Unlock()
 
 	if !running {
-		if sync {
-			return t.SynchroniseTopology()
-		}
 		return nil
 	}
 
 	if oldPeer1 != newPeer1 {
-		peer1Netns, err := l.Peer1.Node.GetNetns()
+		peer1Netns, err := netnsCache.get(l.Peer1.Node)
 		if err != nil {
 			return err
 		}
-		defer peer1Netns.Close()
 
 		peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
 		if err := applyPeerQoSDiff(
@@ -1470,11 +1682,10 @@ func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
 	}
 
 	if oldPeer2 != newPeer2 {
-		peer2Netns, err := l.Peer2.Node.GetNetns()
+		peer2Netns, err := netnsCache.get(l.Peer2.Node)
 		if err != nil {
 			return err
 		}
-		defer peer2Netns.Close()
 
 		peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
 		if err := applyPeerQoSDiff(
@@ -1485,9 +1696,6 @@ func (t *NetemTopologyManager) LinkUpdate(linkCfg LinkConfig, sync bool) error {
 		}
 	}
 
-	if sync {
-		return t.SynchroniseTopology()
-	}
 	return nil
 }
 
@@ -1506,7 +1714,12 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 	defer t.opMu.Unlock()
 
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			t.mu.Unlock()
+		}
+	}()
 
 	if t.getNodeLocked(name) != nil {
 		return fmt.Errorf("node %s already exists in the topology", name)
@@ -1571,6 +1784,10 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 	}
 
 	if sync {
+		// SynchroniseTopology takes the topology read lock; release the write
+		// lock first.
+		locked = false
+		t.mu.Unlock()
 		return t.SynchroniseTopology()
 	}
 	return nil
@@ -1694,6 +1911,8 @@ func (t *NetemTopologyManager) NodeDel(name string, sync bool) error {
 		}
 	}
 	t.links = keptLinks
+	t.linkIndex = nil
+	t.ensureLinkIndexLocked()
 
 	for _, br := range t.bridges {
 		keptPeers := br.Peers[:0]
@@ -2022,6 +2241,8 @@ func (t *NetemTopologyManager) closeLocked(progressCh chan TopologyRunCloseProgr
 	t.mu.Lock()
 	t.nodes = make([]NetemNode, 0)
 	t.links = make([]*NetemLink, 0)
+	t.linkIndex = nil
+	t.pendingLinks = nil
 	t.bridges = make([]*NetemBridge, 0)
 	t.needsOvs = false
 	t.mu.Unlock()

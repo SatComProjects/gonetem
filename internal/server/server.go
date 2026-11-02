@@ -526,6 +526,96 @@ func (s *netemServer) LinkUpdateMany(ctx context.Context, request *proto.LinkUpd
 	}, nil
 }
 
+func (s *netemServer) LinkSyncMany(ctx context.Context, request *proto.LinkSyncManyRequest) (*proto.LinkSyncManyResponse, error) {
+	project := ProjectGetOne(request.GetPrjId())
+	if project == nil {
+		return nil, &ProjectNotFoundError{request.GetPrjId()}
+	}
+
+	operations := make([]LinkSyncOperation, 0, len(request.GetOperations()))
+	for idx, rOp := range request.GetOperations() {
+		if rOp == nil {
+			return nil, fmt.Errorf("link sync operation %d is missing", idx)
+		}
+		if rOp.GetLink() == nil {
+			return nil, fmt.Errorf("link configuration %d is missing", idx)
+		}
+		action, err := linkSyncActionFromProto(rOp.GetAction())
+		if err != nil {
+			return nil, err
+		}
+		operations = append(operations, LinkSyncOperation{
+			Action: action,
+			Config: getLinkConfig(rOp.GetLink()),
+		})
+	}
+
+	outcomes, err := project.Topology.LinkSyncMany(operations, request.GetSync())
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]*proto.LinkSyncResult, 0, len(outcomes))
+	var added, deleted, updated uint32
+	for _, outcome := range outcomes {
+		status := &proto.Status{Code: proto.StatusCode_OK}
+		if outcome.Err != nil {
+			status.Code = proto.StatusCode_ERROR
+			status.Error = outcome.Err.Error()
+		} else {
+			switch outcome.Action {
+			case LinkSyncAdd:
+				added++
+			case LinkSyncDel:
+				deleted++
+			case LinkSyncUpdate:
+				updated++
+			}
+		}
+		results = append(results, &proto.LinkSyncResult{
+			Status:         status,
+			Action:         linkSyncActionToProto(outcome.Action),
+			Peer1:          outcome.Peer1,
+			Peer2:          outcome.Peer2,
+			DurationMicros: outcome.DurationMicros,
+		})
+	}
+
+	return &proto.LinkSyncManyResponse{
+		Status:  &proto.Status{Code: proto.StatusCode_OK},
+		Results: results,
+		Added:   added,
+		Deleted: deleted,
+		Updated: updated,
+	}, nil
+}
+
+func linkSyncActionFromProto(action proto.LinkSyncAction) (LinkSyncAction, error) {
+	switch action {
+	case proto.LinkSyncAction_LINK_SYNC_ADD:
+		return LinkSyncAdd, nil
+	case proto.LinkSyncAction_LINK_SYNC_DEL:
+		return LinkSyncDel, nil
+	case proto.LinkSyncAction_LINK_SYNC_UPDATE:
+		return LinkSyncUpdate, nil
+	default:
+		return 0, fmt.Errorf("unknown link sync action %d", action)
+	}
+}
+
+func linkSyncActionToProto(action LinkSyncAction) proto.LinkSyncAction {
+	switch action {
+	case LinkSyncAdd:
+		return proto.LinkSyncAction_LINK_SYNC_ADD
+	case LinkSyncDel:
+		return proto.LinkSyncAction_LINK_SYNC_DEL
+	case LinkSyncUpdate:
+		return proto.LinkSyncAction_LINK_SYNC_UPDATE
+	default:
+		return proto.LinkSyncAction_LINK_SYNC_ADD
+	}
+}
+
 func (s *netemServer) LinkAdd(ctx context.Context, request *proto.LinkRequest) (*proto.AckResponse, error) {
 	project := ProjectGetOne(request.GetPrjId())
 	if project == nil {

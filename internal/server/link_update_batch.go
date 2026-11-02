@@ -54,11 +54,20 @@ func (t *NetemTopologyManager) LinkUpdateMany(configs []LinkConfig, sync bool) (
 		return outcomes, nil
 	}
 
-	// A batch is a single logical operation. Taking the write side once avoids
-	// one lock acquisition per link and keeps the config snapshot consistent
-	// while the batch is being applied.
-	t.opMu.Lock()
-	defer t.opMu.Unlock()
+	t.updateBatchMu.Lock()
+	defer t.updateBatchMu.Unlock()
+
+	// A batch is a single logical operation. Take the topology lock once
+	// instead of once per link. Non-sync batches only mutate per-link state and
+	// independent kernel interfaces, so they can share the read side with
+	// link adds/deletes; sync batches rewrite the topology file exclusively.
+	if sync {
+		t.opMu.Lock()
+		defer t.opMu.Unlock()
+	} else {
+		t.opMu.RLock()
+		defer t.opMu.RUnlock()
+	}
 
 	entries := make([]*linkBatchEntry, 0, len(configs))
 	locked := make([]*NetemLink, 0, len(configs))
