@@ -289,6 +289,8 @@ func ParseServerConfig(config string) error {
 		return err
 	}
 
+	applyExtraNodeDefaults(data)
+
 	// The update section is optional: keep the defaults for the keys that
 	// are not defined in the configuration file.
 	defaults := NetemServerConfig{}
@@ -310,6 +312,42 @@ func ParseServerConfig(config string) error {
 	}
 
 	return nil
+}
+
+// applyExtraNodeDefaults enables TSO on custom node types when their
+// options.tso key is absent. Known node types ship an explicit value; without
+// this default an extraNode would silently inherit tso=false and pay an
+// ethtool call for every attached interface.
+func applyExtraNodeDefaults(data []byte) {
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return
+	}
+
+	dockerRaw, ok := raw["docker"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	extraRaw, ok := dockerRaw["extraNodes"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for idx, entryRaw := range extraRaw {
+		if idx >= len(ServerConfig.Docker.ExtraNodes) {
+			break
+		}
+		entry, ok := entryRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if optionsRaw, ok := entry["options"].(map[string]interface{}); ok {
+			if _, exists := optionsRaw["tso"]; exists {
+				continue
+			}
+		}
+		ServerConfig.Docker.ExtraNodes[idx].Options.Tso = true
+	}
 }
 
 func GetDockerImageId(image string) string {
