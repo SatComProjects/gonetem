@@ -3,6 +3,7 @@ Description=Gonetem server
 After=network.target
 
 [Service]
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStartPre=/bin/touch /var/log/gonetem-server.log
 ExecStartPre=/bin/chown root:adm /var/log/gonetem-server.log
 ExecStart=/usr/local/bin/gonetem-server -log-file /var/log/gonetem-server.log
