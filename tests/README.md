@@ -14,7 +14,10 @@ end-to-end behavior:
 - rate with `iperf3`: TCP throughput is capped by the configured tbf rate;
 - loss with `ping` and UDP `iperf3`: 10% loss per direction gives ~19%
   round-trip loss for ping, while one-way UDP traffic sees ~10% loss. Both are
-  checked before and after `LinkUpdate`.
+  checked before and after `LinkUpdate`;
+- queue length with `tc -j qdisc show` and `ip -j link show`: the netem
+  `limit` and the interface `txqueuelen` are checked on creation and after
+  `LinkUpdate`.
 
 Every test runs once with `namespace` nodes and once with `docker.host` nodes.
 Each qdisc, RTT, loss and throughput result is printed as a colored
@@ -23,8 +26,8 @@ Colors are enabled on a terminal, or with `FORCE_COLOR=1`; use `NO_COLOR=1` to
 disable them.
 
 The `docker.host` cases require the Docker image configured for the host node
-type to be present on the server. `tc`, `ping` and `iperf3` must be available
-in the node environment. No root privileges are needed on the client side: the
+type to be present on the server. `tc`, `ip`, `ping` and `iperf3` must be
+available in the node environment. No root privileges are needed on the client side: the
 server performs all privileged operations.
 
 ## Run

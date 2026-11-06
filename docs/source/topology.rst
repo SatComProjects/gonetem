@@ -208,10 +208,12 @@ definition requires the following parameters:
   * ``jitter`` (int, optional): bidirectionnal jitter on the link in ms
   * ``loss`` (float, optional): bidirectionnal loss on the link in percent (between 0.0 and 100.0)
   * ``rate`` (int, optional): bidirectionnal link rate in kbits per second
-  * ``buffer`` (float, optional): bidirectionnal buffer size (equivalent to ``limit`` param in the ``tc`` command). The value has to be set in BDP (Bandwith Delay Product) scale factor (1.0 per default).
+  * ``buffer`` (float, optional): bidirectionnal TBF byte limit expressed in BDP (Bandwidth Delay Product) scale factors (1.0 per default). Despite the name, this is not the queue length: the TBF limit is computed as ``buffer * rate * delay / 8``.
   * ``burst`` (int, optional): bidirectionnal burst size in bytes. If not set, a default value based on the rate is used.
-  * ``peer1qos``: optional section to configure link QoS in the direction peer1 --> peer2. This section accept the same parameters than global configuration (ie. delay/jitter/loss/rate/buffer/burst)
-  * ``peer2qos``: optional section to configure link QoS in the direction peer2 --> peer1. This section accept the same parameters than global configuration (ie. delay/jitter/loss/rate/buffer/burst)
+  * ``limit`` (int, optional): netem queue limit in packets (1000 per default). Only used when delay, jitter or loss is configured; it bounds the packets held by the netem qdisc and therefore the modelled link buffer.
+  * ``txqueuelen`` (int, optional): interface transmit queue length in packets (1000 per default). Applied to the interface that terminates the link.
+  * ``peer1qos``: optional section to configure link QoS in the direction peer1 --> peer2. This section accept the same parameters than global configuration (ie. delay/jitter/loss/rate/buffer/burst/limit/txqueuelen)
+  * ``peer2qos``: optional section to configure link QoS in the direction peer2 --> peer1. This section accept the same parameters than global configuration (ie. delay/jitter/loss/rate/buffer/burst/limit/txqueuelen)
 
 Example of links with same QoS in the two directions
 """"""""""""""""""""""""""""""""""""""""""""""""""""
