@@ -97,15 +97,19 @@ func TestCheckNodeConfigValidatesNamespaceOptions(t *testing.T) {
 
 func TestQoSValidation(t *testing.T) {
 	valid := LinkConfig{
-		Delay:  10,
-		Jitter: 2,
-		Loss:   1,
-		Rate:   1000,
-		Buffer: 1,
-		Burst:  10000,
+		Delay:      10,
+		Jitter:     2,
+		Loss:       1,
+		Rate:       1000,
+		Buffer:     1,
+		Burst:      10000,
+		Limit:      1000,
+		TxQueuelen: 1500,
 		Peer1QoS: QoSConfig{
-			Delay: 10,
-			Rate:  1000,
+			Delay:      10,
+			Rate:       1000,
+			Limit:      500,
+			TxQueuelen: 2000,
 		},
 	}
 	if err := valid.Validate(); err != nil {
@@ -124,8 +128,14 @@ func TestQoSValidation(t *testing.T) {
 		{Buffer: 1},
 		{Delay: 10, Rate: 1000, Burst: -1},
 		{Burst: 1},
+		{Limit: -1},
+		{Limit: maxQueuePackets + 1},
+		{TxQueuelen: -1},
+		{TxQueuelen: maxQueuePackets + 1},
 		{Peer1QoS: QoSConfig{Delay: -1}},
 		{Peer2QoS: QoSConfig{Rate: 1000}},
+		{Peer1QoS: QoSConfig{Limit: -1}},
+		{Peer2QoS: QoSConfig{TxQueuelen: maxQueuePackets + 1}},
 	}
 
 	for i, cfg := range invalid {
@@ -192,5 +202,50 @@ nodes:
 				t.Fatalf("CheckTopology accepted invalid node type %q", typ)
 			}
 		})
+	}
+}
+
+func TestCheckTopologyParsesQueueLength(t *testing.T) {
+	file := writeTopology(t, `
+nodes:
+  R1:
+    type: docker.host
+  R2:
+    type: docker.host
+links:
+- peer1: R1.0
+  peer2: R2.0
+  delay: 10
+  limit: 250
+  txqueuelen: 1500
+`)
+
+	topology, errors := CheckTopology(file)
+	if len(errors) != 0 {
+		t.Fatalf("CheckTopology rejected valid queue length: %v", errors)
+	}
+	if len(topology.Links) != 1 {
+		t.Fatalf("unexpected links: %+v", topology.Links)
+	}
+	if topology.Links[0].Limit != 250 || topology.Links[0].TxQueuelen != 1500 {
+		t.Fatalf("queue length was not parsed: %+v", topology.Links[0])
+	}
+}
+
+func TestCheckTopologyRejectsNegativeQueueLength(t *testing.T) {
+	file := writeTopology(t, `
+nodes:
+  R1:
+    type: docker.host
+  R2:
+    type: docker.host
+links:
+- peer1: R1.0
+  peer2: R2.0
+  limit: -1
+`)
+
+	if _, errors := CheckTopology(file); len(errors) == 0 {
+		t.Fatal("CheckTopology accepted a negative netem limit")
 	}
 }

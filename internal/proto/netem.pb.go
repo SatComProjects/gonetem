@@ -3627,13 +3627,18 @@ func (x *TopologyRunMsg_NodeMessages) GetMessages() []string {
 }
 
 type LinkConfig_QoSConfig struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Loss          float32                `protobuf:"fixed32,3,opt,name=loss,proto3" json:"loss,omitempty"`
-	Delay         int32                  `protobuf:"varint,4,opt,name=delay,proto3" json:"delay,omitempty"`
-	Jitter        int32                  `protobuf:"varint,5,opt,name=jitter,proto3" json:"jitter,omitempty"`
-	Rate          int32                  `protobuf:"varint,6,opt,name=rate,proto3" json:"rate,omitempty"`
-	Buffer        float32                `protobuf:"fixed32,7,opt,name=buffer,proto3" json:"buffer,omitempty"`
-	Burst         int32                  `protobuf:"varint,8,opt,name=burst,proto3" json:"burst,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Loss   float32                `protobuf:"fixed32,3,opt,name=loss,proto3" json:"loss,omitempty"`
+	Delay  int32                  `protobuf:"varint,4,opt,name=delay,proto3" json:"delay,omitempty"`
+	Jitter int32                  `protobuf:"varint,5,opt,name=jitter,proto3" json:"jitter,omitempty"`
+	Rate   int32                  `protobuf:"varint,6,opt,name=rate,proto3" json:"rate,omitempty"`
+	Buffer float32                `protobuf:"fixed32,7,opt,name=buffer,proto3" json:"buffer,omitempty"`
+	Burst  int32                  `protobuf:"varint,8,opt,name=burst,proto3" json:"burst,omitempty"`
+	// netem queue limit in packets. 0 keeps the server default (1000).
+	Limit uint32 `protobuf:"varint,9,opt,name=limit,proto3" json:"limit,omitempty"`
+	// interface transmit queue length in packets. 0 keeps the server
+	// default (1000).
+	Txqueuelen    uint32 `protobuf:"varint,10,opt,name=txqueuelen,proto3" json:"txqueuelen,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3706,6 +3711,20 @@ func (x *LinkConfig_QoSConfig) GetBuffer() float32 {
 func (x *LinkConfig_QoSConfig) GetBurst() int32 {
 	if x != nil {
 		return x.Burst
+	}
+	return 0
+}
+
+func (x *LinkConfig_QoSConfig) GetLimit() uint32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *LinkConfig_QoSConfig) GetTxqueuelen() uint32 {
+	if x != nil {
+		return x.Txqueuelen
 	}
 	return 0
 }
@@ -4045,20 +4064,25 @@ const file_internal_proto_netem_proto_rawDesc = "" +
 	"\fBRIDGE_COUNT\x10\x01\x12\x0e\n" +
 	"\n" +
 	"NODE_CLOSE\x10\x02\x12\x10\n" +
-	"\fBRIDGE_CLOSE\x10\x03\"\xbc\x02\n" +
+	"\fBRIDGE_CLOSE\x10\x03\"\xf2\x02\n" +
 	"\n" +
 	"LinkConfig\x12\x14\n" +
 	"\x05peer1\x18\x01 \x01(\tR\x05peer1\x12\x14\n" +
 	"\x05peer2\x18\x02 \x01(\tR\x05peer2\x127\n" +
 	"\bpeer1qos\x18\x03 \x01(\v2\x1b.netem.LinkConfig.QoSConfigR\bpeer1qos\x127\n" +
-	"\bpeer2qos\x18\x04 \x01(\v2\x1b.netem.LinkConfig.QoSConfigR\bpeer2qos\x1a\x8f\x01\n" +
+	"\bpeer2qos\x18\x04 \x01(\v2\x1b.netem.LinkConfig.QoSConfigR\bpeer2qos\x1a\xc5\x01\n" +
 	"\tQoSConfig\x12\x12\n" +
 	"\x04loss\x18\x03 \x01(\x02R\x04loss\x12\x14\n" +
 	"\x05delay\x18\x04 \x01(\x05R\x05delay\x12\x16\n" +
 	"\x06jitter\x18\x05 \x01(\x05R\x06jitter\x12\x12\n" +
 	"\x04rate\x18\x06 \x01(\x05R\x04rate\x12\x16\n" +
 	"\x06buffer\x18\a \x01(\x02R\x06buffer\x12\x14\n" +
-	"\x05burst\x18\b \x01(\x05R\x05burst\"^\n" +
+	"\x05burst\x18\b \x01(\x05R\x05burst\x12\x14\n" +
+	"\x05limit\x18\t \x01(\rR\x05limit\x12\x1e\n" +
+	"\n" +
+	"txqueuelen\x18\n" +
+	" \x01(\rR\n" +
+	"txqueuelen\"^\n" +
 	"\vLinkRequest\x12\x14\n" +
 	"\x05prjId\x18\x01 \x01(\tR\x05prjId\x12%\n" +
 	"\x04link\x18\x02 \x01(\v2\x11.netem.LinkConfigR\x04link\x12\x12\n" +
