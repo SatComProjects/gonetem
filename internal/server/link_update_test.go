@@ -253,3 +253,19 @@ func TestQoSDiffTxQueuelenOnlyChange(t *testing.T) {
 			reset, changeTbf, changeNetem)
 	}
 }
+
+func TestGetPeerQoSQueueFields(t *testing.T) {
+	cfg := LinkConfig{Limit: 750, TxQueuelen: 1500}
+
+	if q := cfg.GetPeer1QoS(); q.Limit != 750 || q.TxQueuelen != 1500 {
+		t.Fatalf("top-level queue fields were not applied to peer1: %+v", q)
+	}
+
+	cfg.Peer1QoS = QoSConfig{Limit: 250, TxQueuelen: 500}
+	if q := cfg.GetPeer1QoS(); q.Limit != 250 || q.TxQueuelen != 500 {
+		t.Fatalf("per-direction queue fields did not override top-level: %+v", q)
+	}
+	if q := cfg.GetPeer2QoS(); q.Limit != 750 || q.TxQueuelen != 1500 {
+		t.Fatalf("peer2 fallback was affected by peer1: %+v", q)
+	}
+}

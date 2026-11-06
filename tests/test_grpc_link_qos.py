@@ -151,10 +151,14 @@ def _generate_stubs() -> None:
     out_dir = Path(tempfile.mkdtemp(prefix="gonetem-grpc-stubs-"))
     atexit.register(shutil.rmtree, out_dir, ignore_errors=True)
 
+    # protoc.main() does not add the well-known types bundled with grpcio-tools;
+    # the python -m entrypoint does. Pass that include path explicitly.
+    proto_include = Path(protoc.__file__).parent / "_proto"
     result = protoc.main(
         [
             "grpc_tools.protoc",
             f"-I{PROTO_FILE.parent}",
+            f"-I{proto_include}",
             f"--python_out={out_dir}",
             f"--grpc_python_out={out_dir}",
             str(PROTO_FILE),
@@ -299,10 +303,13 @@ def _qdisc_metrics(qdiscs, context: str) -> dict[str, float]:
     tbf = [q for q in qdiscs if q.get("kind") == "tbf"]
     tbf_options = tbf[0]["options"] if len(tbf) == 1 else None
 
+    delay = options.get("delay", {})
+    loss = options.get("loss-random", {})
+
     return {
-        "Delay": options["delay"]["delay"] * 1000.0,
-        "Jitter": options["delay"]["jitter"] * 1000.0,
-        "Loss": options["loss-random"]["loss"] * 100.0,
+        "Delay": delay.get("delay", 0) * 1000.0,
+        "Jitter": delay.get("jitter", 0) * 1000.0,
+        "Loss": loss.get("loss", 0.0) * 100.0,
         "Rate": tbf_options["rate"] / 125.0 if tbf_options else 0.0,
         "Burst": float(tbf_options["burst"]) if tbf_options else 0.0,
         "Limit": float(options.get("limit", 0)),
