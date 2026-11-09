@@ -140,3 +140,44 @@ func TestApplyQoSInstallsAndClearsQdiscs(t *testing.T) {
 		t.Fatalf("qdiscs remain after reset: %#v", kinds)
 	}
 }
+
+func TestNetemQdiscUsesQueueLimit(t *testing.T) {
+	dev := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 1}}
+
+	cases := []struct {
+		name  string
+		limit int
+		want  uint32
+	}{
+		{"unset uses default", 0, DefaultNetemLimit},
+		{"negative uses default", -1, DefaultNetemLimit},
+		{"explicit value", 2500, 2500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			qdisc, err := netemQdisc(dev, 10, 1, 0.5, tc.limit, RootHandle, RootParent)
+			if err != nil {
+				t.Fatalf("netemQdisc returned an error: %v", err)
+			}
+			if got := qdisc.Attribute.Netem.Qopt.Limit; got != tc.want {
+				t.Fatalf("netem limit = %d, expected %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEffectiveTxQueuelen(t *testing.T) {
+	cases := []struct {
+		qlen int
+		want int
+	}{
+		{0, DefaultTxQueuelen},
+		{-5, DefaultTxQueuelen},
+		{1500, 1500},
+	}
+	for _, tc := range cases {
+		if got := effectiveTxQueuelen(tc.qlen); got != tc.want {
+			t.Errorf("effectiveTxQueuelen(%d) = %d, expected %d", tc.qlen, got, tc.want)
+		}
+	}
+}

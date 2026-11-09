@@ -54,14 +54,24 @@ func formatTime(t int) (uint32, error) {
 	return core.Time2Tick(tcTime), nil
 }
 
+// Default queue sizes used when the request leaves them unset.
+const (
+	// DefaultNetemLimit is the netem queue limit in packets.
+	DefaultNetemLimit = 1000
+	// DefaultTxQueuelen is the interface transmit queue length in packets.
+	DefaultTxQueuelen = 1000
+)
+
 // QoS groups the parameters needed to configure one link direction.
 type QoS struct {
-	Delay  int
-	Jitter int
-	Loss   float64
-	Rate   int
-	Buffer float64
-	Burst  int
+	Delay      int
+	Jitter     int
+	Loss       float64
+	Rate       int
+	Buffer     float64
+	Burst      int
+	Limit      int // netem queue limit in packets; <= 0 keeps the default
+	TxQueuelen int // interface tx queue length in packets; <= 0 keeps the default
 }
 
 func tbfQdisc(devID netlink.Link, delay, rate int, bufFactor float64, burst int) tc.Object {
@@ -104,7 +114,21 @@ func tbfQdisc(devID netlink.Link, delay, rate int, bufFactor float64, burst int)
 	}
 }
 
-func netemQdisc(devID netlink.Link, delay int, jitter int, loss float64, handle uint32, parent uint32) (tc.Object, error) {
+func effectiveNetemLimit(limit int) uint32 {
+	if limit <= 0 {
+		return DefaultNetemLimit
+	}
+	return uint32(limit)
+}
+
+func effectiveTxQueuelen(qlen int) int {
+	if qlen <= 0 {
+		return DefaultTxQueuelen
+	}
+	return qlen
+}
+
+func netemQdisc(devID netlink.Link, delay int, jitter int, loss float64, limit int, handle uint32, parent uint32) (tc.Object, error) {
 	latency, err := formatTime(delay)
 	if err != nil {
 		return tc.Object{}, err
@@ -128,7 +152,7 @@ func netemQdisc(devID netlink.Link, delay int, jitter int, loss float64, handle 
 				Qopt: tc.NetemQopt{
 					Latency: latency,
 					Jitter:  jitterTicks,
-					Limit:   1000,
+					Limit:   effectiveNetemLimit(limit),
 					Loss:    formatPercent(loss),
 				},
 			},
@@ -159,7 +183,7 @@ func Netem(ifname string, namespace netns.NsHandle, delay int, jitter int, loss 
 			}
 		}()
 
-		qdisc, err := netemQdisc(devID, delay, jitter, loss, handle, parent)
+		qdisc, err := netemQdisc(devID, delay, jitter, loss, 0, handle, parent)
 		if err != nil {
 			return err
 		}
@@ -334,6 +358,13 @@ func applyQoSAt(rtnl *tc.Tc, op QoSOperation) (hasTbf, hasNetem bool, err error)
 		op.ChangeNetem = false
 	}
 
+	txQueuelen := effectiveTxQueuelen(op.QoS.TxQueuelen)
+	if devID.Attrs().TxQLen != txQueuelen {
+		if err := netlink.LinkSetTxQLen(devID, txQueuelen); err != nil {
+			return false, false, fmt.Errorf("could not set txqueuelen on %s: %w", op.IfName, err)
+		}
+	}
+
 	if op.QoS.Rate > 0 {
 		qdisc := tbfQdisc(devID, op.QoS.Delay+op.QoS.Jitter, op.QoS.Rate, op.QoS.Buffer, op.QoS.Burst)
 		if op.ChangeTbf {
@@ -353,7 +384,7 @@ func applyQoSAt(rtnl *tc.Tc, op QoSOperation) (hasTbf, hasNetem bool, err error)
 			handle = NetemChildHandle
 		}
 
-		qdisc, err := netemQdisc(devID, op.QoS.Delay, op.QoS.Jitter, op.QoS.Loss, handle, parent)
+		qdisc, err := netemQdisc(devID, op.QoS.Delay, op.QoS.Jitter, op.QoS.Loss, op.QoS.Limit, handle, parent)
 		if err != nil {
 			return hasTbf, false, err
 		}

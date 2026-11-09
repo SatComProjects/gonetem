@@ -43,25 +43,29 @@ func nodeConfigLimit() int { return concurrencyLimit(options.ServerConfig.Docker
 func linkCreateLimit() int { return concurrencyLimit(options.ServerConfig.Docker.LinkConcurrency) }
 
 type QoSConfig struct {
-	Loss   float64 `yaml:",omitempty"` // percent
-	Delay  int     `yaml:",omitempty"` // ms
-	Jitter int     `yaml:",omitempty"` // ms
-	Rate   int     `yaml:",omitempty"` // kbps
-	Buffer float64 `yaml:",omitempty"` // BDP scale factor
-	Burst  int     `yaml:",omitempty"` // bytes
+	Loss       float64 `yaml:",omitempty"` // percent
+	Delay      int     `yaml:",omitempty"` // ms
+	Jitter     int     `yaml:",omitempty"` // ms
+	Rate       int     `yaml:",omitempty"` // kbps
+	Buffer     float64 `yaml:",omitempty"` // BDP scale factor
+	Burst      int     `yaml:",omitempty"` // bytes
+	Limit      int     `yaml:",omitempty"` // netem queue limit in packets
+	TxQueuelen int     `yaml:",omitempty"` // interface tx queue length in packets
 }
 
 type LinkConfig struct {
-	Peer1    string
-	Peer2    string
-	Loss     float64 `yaml:",omitempty"` // percent
-	Delay    int     `yaml:",omitempty"` // ms
-	Jitter   int     `yaml:",omitempty"` // ms
-	Rate     int     `yaml:",omitempty"` // kbps
-	Buffer   float64 `yaml:",omitempty"` // BDP scale factor
-	Burst    int     `yaml:",omitempty"` // bytes
-	Peer1QoS QoSConfig
-	Peer2QoS QoSConfig
+	Peer1      string
+	Peer2      string
+	Loss       float64 `yaml:",omitempty"` // percent
+	Delay      int     `yaml:",omitempty"` // ms
+	Jitter     int     `yaml:",omitempty"` // ms
+	Rate       int     `yaml:",omitempty"` // kbps
+	Buffer     float64 `yaml:",omitempty"` // BDP scale factor
+	Burst      int     `yaml:",omitempty"` // bytes
+	Limit      int     `yaml:",omitempty"` // netem queue limit in packets
+	TxQueuelen int     `yaml:",omitempty"` // interface tx queue length in packets
+	Peer1QoS   QoSConfig
+	Peer2QoS   QoSConfig
 }
 
 const (
@@ -69,6 +73,9 @@ const (
 	// 17_000_000 * 125 = 2.125e9, which also fits a 32-bit signed int.
 	// If higher rates are needed, compute rate*125 in uint64 in tc.go.
 	maxRateKbps = 17_000_000
+	// maxQueuePackets bounds netem limit and txqueuelen. It is far above any
+	// realistic emulated queue and keeps the values safe for tc and netlink.
+	maxQueuePackets = 1_000_000
 )
 
 func (q QoSConfig) WithDefaults() QoSConfig {
@@ -109,17 +116,25 @@ func (q QoSConfig) validate(prefix string) error {
 	if q.Burst > 0 && q.Rate == 0 {
 		return fmt.Errorf("%s burst requires a non-zero rate", prefix)
 	}
+	if q.Limit < 0 || q.Limit > maxQueuePackets {
+		return fmt.Errorf("%s limit must be in [0, %d] packets", prefix, maxQueuePackets)
+	}
+	if q.TxQueuelen < 0 || q.TxQueuelen > maxQueuePackets {
+		return fmt.Errorf("%s txqueuelen must be in [0, %d] packets", prefix, maxQueuePackets)
+	}
 	return nil
 }
 
 func (l LinkConfig) Validate() error {
 	top := QoSConfig{
-		Loss:   l.Loss,
-		Delay:  l.Delay,
-		Jitter: l.Jitter,
-		Rate:   l.Rate,
-		Buffer: l.Buffer,
-		Burst:  l.Burst,
+		Loss:       l.Loss,
+		Delay:      l.Delay,
+		Jitter:     l.Jitter,
+		Rate:       l.Rate,
+		Buffer:     l.Buffer,
+		Burst:      l.Burst,
+		Limit:      l.Limit,
+		TxQueuelen: l.TxQueuelen,
 	}
 	if err := top.validate("link"); err != nil {
 		return err
@@ -136,17 +151,21 @@ func (l *LinkConfig) GetPeer1QoS() QoSConfig {
 		l.Peer1QoS.Jitter > 0 ||
 		l.Peer1QoS.Rate > 0 ||
 		l.Peer1QoS.Buffer > 0 ||
-		l.Peer1QoS.Burst > 0 {
+		l.Peer1QoS.Burst > 0 ||
+		l.Peer1QoS.Limit > 0 ||
+		l.Peer1QoS.TxQueuelen > 0 {
 		return l.Peer1QoS.WithDefaults()
 	}
 
 	return QoSConfig{
-		Loss:   l.Loss,
-		Delay:  l.Delay,
-		Jitter: l.Jitter,
-		Rate:   l.Rate,
-		Buffer: l.Buffer,
-		Burst:  l.Burst,
+		Loss:       l.Loss,
+		Delay:      l.Delay,
+		Jitter:     l.Jitter,
+		Rate:       l.Rate,
+		Buffer:     l.Buffer,
+		Burst:      l.Burst,
+		Limit:      l.Limit,
+		TxQueuelen: l.TxQueuelen,
 	}.WithDefaults()
 }
 
@@ -156,17 +175,21 @@ func (l *LinkConfig) GetPeer2QoS() QoSConfig {
 		l.Peer2QoS.Jitter > 0 ||
 		l.Peer2QoS.Rate > 0 ||
 		l.Peer2QoS.Buffer > 0 ||
-		l.Peer2QoS.Burst > 0 {
+		l.Peer2QoS.Burst > 0 ||
+		l.Peer2QoS.Limit > 0 ||
+		l.Peer2QoS.TxQueuelen > 0 {
 		return l.Peer2QoS.WithDefaults()
 	}
 
 	return QoSConfig{
-		Loss:   l.Loss,
-		Delay:  l.Delay,
-		Jitter: l.Jitter,
-		Rate:   l.Rate,
-		Buffer: l.Buffer,
-		Burst:  l.Burst,
+		Loss:       l.Loss,
+		Delay:      l.Delay,
+		Jitter:     l.Jitter,
+		Rate:       l.Rate,
+		Buffer:     l.Buffer,
+		Burst:      l.Burst,
+		Limit:      l.Limit,
+		TxQueuelen: l.TxQueuelen,
 	}.WithDefaults()
 }
 
@@ -374,12 +397,14 @@ func applyPeerQoSDiff(ifName string, ns netns.NsHandle, old, next QoSConfig, has
 
 func toLinkQoS(q QoSConfig) link.QoS {
 	return link.QoS{
-		Delay:  q.Delay,
-		Jitter: q.Jitter,
-		Loss:   q.Loss,
-		Rate:   q.Rate,
-		Buffer: q.Buffer,
-		Burst:  q.Burst,
+		Delay:      q.Delay,
+		Jitter:     q.Jitter,
+		Loss:       q.Loss,
+		Rate:       q.Rate,
+		Buffer:     q.Buffer,
+		Burst:      q.Burst,
+		Limit:      q.Limit,
+		TxQueuelen: q.TxQueuelen,
 	}
 }
 
@@ -1578,7 +1603,8 @@ func applyLinkUpdateConfig(l *NetemLink, linkCfg LinkConfig) {
 	}
 
 	hasTopLevel := linkCfg.Delay != 0 || linkCfg.Jitter != 0 || linkCfg.Loss != 0.0 ||
-		linkCfg.Rate != 0 || linkCfg.Buffer != 0.0 || linkCfg.Burst != 0
+		linkCfg.Rate != 0 || linkCfg.Buffer != 0.0 || linkCfg.Burst != 0 ||
+		linkCfg.Limit != 0 || linkCfg.TxQueuelen != 0
 
 	linkCfg.Peer1QoS = linkCfg.Peer1QoS.WithDefaults()
 	linkCfg.Peer2QoS = linkCfg.Peer2QoS.WithDefaults()
@@ -1593,6 +1619,8 @@ func applyLinkUpdateConfig(l *NetemLink, linkCfg LinkConfig) {
 	l.Config.Rate = linkCfg.Rate
 	l.Config.Buffer = linkCfg.Buffer
 	l.Config.Burst = linkCfg.Burst
+	l.Config.Limit = linkCfg.Limit
+	l.Config.TxQueuelen = linkCfg.TxQueuelen
 
 	// Preserve the historical behavior used by the tests: when the request has
 	// no top-level QoS and both directions are identical, mirror the peer values
@@ -1605,6 +1633,8 @@ func applyLinkUpdateConfig(l *NetemLink, linkCfg LinkConfig) {
 		l.Config.Rate = q.Rate
 		l.Config.Buffer = q.Buffer
 		l.Config.Burst = q.Burst
+		l.Config.Limit = q.Limit
+		l.Config.TxQueuelen = q.TxQueuelen
 	}
 }
 
