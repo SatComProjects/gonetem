@@ -14,7 +14,7 @@ import (
 // VERSION is a variable so release builds can override it with:
 //
 //	-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=..."
-var VERSION = "0.7.0"
+var VERSION = "0.8.0"
 
 const (
 	IMAGE_VERSION         = "0.6.0"
@@ -35,6 +35,7 @@ docker:
   removeConcurrency: 30
   configConcurrency: 30
   linkConcurrency: 30
+  routeConcurrency: 32
   nodes:
     router:
       image: mroy31/gonetem-frr
@@ -65,6 +66,7 @@ docker:
   removeConcurrency: 30
   configConcurrency: 30
   linkConcurrency: 30
+  routeConcurrency: 32
   nodes:
     router:
       type: router
@@ -249,6 +251,7 @@ type NetemServerConfig struct {
 		RemoveConcurrency int
 		ConfigConcurrency int
 		LinkConcurrency   int
+		RouteConcurrency  int
 		Nodes             struct {
 			Router DockerNodeConfig
 			Host   DockerNodeConfig
@@ -286,6 +289,8 @@ func ParseServerConfig(config string) error {
 		return err
 	}
 
+	applyExtraNodeDefaults(data)
+
 	// The update section is optional: keep the defaults for the keys that
 	// are not defined in the configuration file.
 	defaults := NetemServerConfig{}
@@ -302,8 +307,47 @@ func ParseServerConfig(config string) error {
 	if ServerConfig.Update.GoVersion == "" {
 		ServerConfig.Update.GoVersion = defaults.Update.GoVersion
 	}
+	if ServerConfig.Docker.RouteConcurrency == 0 {
+		ServerConfig.Docker.RouteConcurrency = defaults.Docker.RouteConcurrency
+	}
 
 	return nil
+}
+
+// applyExtraNodeDefaults enables TSO on custom node types when their
+// options.tso key is absent. Known node types ship an explicit value; without
+// this default an extraNode would silently inherit tso=false and pay an
+// ethtool call for every attached interface.
+func applyExtraNodeDefaults(data []byte) {
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return
+	}
+
+	dockerRaw, ok := raw["docker"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	extraRaw, ok := dockerRaw["extraNodes"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for idx, entryRaw := range extraRaw {
+		if idx >= len(ServerConfig.Docker.ExtraNodes) {
+			break
+		}
+		entry, ok := entryRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if optionsRaw, ok := entry["options"].(map[string]interface{}); ok {
+			if _, exists := optionsRaw["tso"]; exists {
+				continue
+			}
+		}
+		ServerConfig.Docker.ExtraNodes[idx].Options.Tso = true
+	}
 }
 
 func GetDockerImageId(image string) string {

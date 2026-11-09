@@ -59,3 +59,101 @@ Request: ``NodeDelRequest``
 Response: ``AckResponse``
 
 All point-to-point links and bridge connections attached to the node are removed, the underlying Docker container or Open vSwitch bridge is deleted, and when ``sync`` is ``true`` the ``network.yml`` file is updated.
+
+RouteInstall
+------------
+
+Apply a batch of route changes to several nodes in one call.
+
+Request: ``RouteInstallRequest``
+
+.. code-block:: protobuf
+
+    message RouteInstallRequest {
+        string prjId = 1;
+        map<string, RouteBatch> nodes = 2;
+        uint32 maxConcurrency = 3; // 0 uses the server configuration
+    }
+
+    message RouteBatch {
+        repeated RouteSpec routes = 1;
+    }
+
+    message RouteSpec {
+        RouteAction action = 1;       // ROUTE_REPLACE or ROUTE_DELETE
+        string destination = 2;       // CIDR, e.g. 10.0.0.0/15
+        string gateway = 3;           // optional for on-link routes
+        string device = 4;            // interface inside the node namespace
+    }
+
+Response: ``RouteInstallResponse``
+
+The server applies route batches inside each node's network namespace using
+netlink, with one bounded worker pool per request. The pool size is
+``docker.routeConcurrency`` (default 32) unless the request asks for a lower
+value. Per-node failures are returned in ``RouteInstallResult.status`` and do
+not abort the other nodes. The RPC is supported on Docker and namespace nodes;
+OVS nodes return an error.
+
+``RouteInstallResult`` also reports the number of applied routes and the
+server-side duration. The older ``NodeRun`` RPC remains available for
+arbitrary commands; clients should use ``RouteInstall`` for route batches.
+
+LinkUpdateMany
+--------------
+
+Apply a batch of link QoS updates in one request.
+
+Request: ``LinkUpdateManyRequest``
+
+.. code-block:: protobuf
+
+    message LinkUpdateManyRequest {
+        string prjId = 1;
+        repeated LinkConfig links = 2;
+        bool sync = 3;
+    }
+
+Response: ``LinkUpdateManyResponse``
+
+The server takes the topology lock once (the read side for non-sync batches,
+so concurrent link adds/deletes are not blocked), updates all link configs,
+groups qdisc operations by node, enters each node namespace once, and uses one
+rtnetlink session per node. Per-link failures are returned in
+``LinkUpdateResult.status``; other links are still applied. Results preserve
+request order and include the peer names and server-side duration. With
+``sync`` set, the topology file is written once after the batch.
+
+LinkSyncMany
+------------
+
+Apply a burst of link adds, deletes and QoS updates in one request.
+
+Request: ``LinkSyncManyRequest``
+
+.. code-block:: protobuf
+
+    message LinkSyncManyRequest {
+        string prjId = 1;
+        repeated LinkSyncOperation operations = 2;
+        bool sync = 3;
+    }
+
+    message LinkSyncOperation {
+        LinkSyncAction action = 1; // LINK_SYNC_ADD, LINK_SYNC_DEL, LINK_SYNC_UPDATE
+        LinkConfig link = 2;
+    }
+
+Response: ``LinkSyncManyResponse``
+
+The server takes the topology lock once, then executes the batch in three
+phases: deletes, adds and updates. This ordering lets a client replace a link
+in a single request. All operations share one node namespace cache, kernel work
+runs in a bounded worker pool (``docker.linkConcurrency``, default 30), and the
+topology file is written at most once at the end when ``sync`` is ``true``.
+
+Duplicate operations for the same link and action are rejected instead of
+being applied in a nondeterministic order. Per-operation failures are reported
+in ``LinkSyncResult.status`` without aborting the rest of the batch. Results
+preserve request order, and ``added``/``deleted``/``updated`` count the
+successful operations of each kind.

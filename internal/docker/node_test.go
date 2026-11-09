@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"strings"
 	"sync"
 	"testing"
 
@@ -147,29 +146,6 @@ func BenchmarkDockerNode_RunCommandPidCache(b *testing.B) {
 			}
 		}
 	})
-}
-
-func TestInterfacePreparationScriptBatchesInterfaces(t *testing.T) {
-	script, ok := interfacePreparationScript([]string{"eth0", "eth1", "mgnt"}, true, true)
-	if !ok {
-		t.Fatal("expected preparation work")
-	}
-	if got := strings.Count(script, "ethtool -K"); got != 2 {
-		t.Fatalf("expected 2 ethtool commands, got %d:\n%s", got, script)
-	}
-	if got := strings.Count(script, "sysctl -w"); got != 2 {
-		t.Fatalf("expected 2 sysctl commands, got %d:\n%s", got, script)
-	}
-	if strings.Contains(script, "mgnt") {
-		t.Fatalf("management interface should not be prepared:\n%s", script)
-	}
-	if !strings.Contains(script, "exit $rc") {
-		t.Fatalf("script does not aggregate exit status:\n%s", script)
-	}
-
-	if _, ok := interfacePreparationScript([]string{"mgnt"}, false, false); ok {
-		t.Fatal("expected no preparation work")
-	}
 }
 
 func TestVRRPInterfaceNameIncludesGroup(t *testing.T) {

@@ -105,12 +105,17 @@ func TestOptions_ParseServerConfig_UpdateDefaults(t *testing.T) {
 	if ServerConfig.Update.GoVersion != "1.24.0" {
 		t.Errorf("unexpected default go version: %s", ServerConfig.Update.GoVersion)
 	}
+	if ServerConfig.Docker.RouteConcurrency != 32 {
+		t.Errorf("unexpected default route concurrency: %d", ServerConfig.Docker.RouteConcurrency)
+	}
 }
 
 func TestOptions_ParseServerConfig_UpdateSection(t *testing.T) {
 	config := t.TempDir() + "/config.yaml"
 	data := `
 listen: "localhost:10110"
+docker:
+  routeConcurrency: 12
 update:
   enabled: true
   branch: develop
@@ -140,7 +145,47 @@ update:
 	if ServerConfig.Update.Workdir != "/var/tmp/gonetem" {
 		t.Errorf("unexpected workdir: %s", ServerConfig.Update.Workdir)
 	}
+	if ServerConfig.Docker.RouteConcurrency != 12 {
+		t.Errorf("unexpected route concurrency: %d", ServerConfig.Docker.RouteConcurrency)
+	}
 	if ServerConfig.Update.Repository != "https://github.com/satcomprojects/gonetem" {
 		t.Errorf("repository must keep its default value: %s", ServerConfig.Update.Repository)
+	}
+}
+
+func TestOptions_ParseServerConfig_ExtraNodeTsoDefault(t *testing.T) {
+	config := t.TempDir() + "/config.yaml"
+	data := `
+listen: "localhost:10110"
+docker:
+  extraNodes:
+  - type: satellite
+    image: example/satellite
+    options:
+      log: false
+  - type: gndstation
+    image: example/gndstation
+    options:
+      tso: false
+`
+	if err := os.WriteFile(config, []byte(data), 0644); err != nil {
+		t.Fatalf("unable to write config file: %v", err)
+	}
+
+	previous := ServerConfig
+	defer func() { ServerConfig = previous }()
+
+	if err := ParseServerConfig(config); err != nil {
+		t.Fatalf("unable to parse config file: %v", err)
+	}
+
+	if len(ServerConfig.Docker.ExtraNodes) != 2 {
+		t.Fatalf("extra nodes = %d, want 2", len(ServerConfig.Docker.ExtraNodes))
+	}
+	if !ServerConfig.Docker.ExtraNodes[0].Options.Tso {
+		t.Error("missing options.tso must default to true")
+	}
+	if ServerConfig.Docker.ExtraNodes[1].Options.Tso {
+		t.Error("explicit options.tso: false was overridden")
 	}
 }

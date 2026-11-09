@@ -22,27 +22,34 @@ import (
 )
 
 func getLinkConfigFromRequest(request *proto.LinkRequest) LinkConfig {
-	rLink := request.GetLink()
+	return getLinkConfig(request.GetLink())
+}
+
+func getLinkConfig(rLink *proto.LinkConfig) LinkConfig {
 	p1qos := rLink.GetPeer1Qos()
 	p2qos := rLink.GetPeer2Qos()
 	return LinkConfig{
 		Peer1: rLink.GetPeer1(),
 		Peer2: rLink.GetPeer2(),
 		Peer1QoS: QoSConfig{
-			Loss:   float64(p1qos.GetLoss()),
-			Delay:  int(p1qos.GetDelay()),
-			Jitter: int(p1qos.GetJitter()),
-			Rate:   int(p1qos.GetRate()),
-			Buffer: float64(p1qos.GetBuffer()),
-			Burst:  int(p1qos.GetBurst()),
+			Loss:       float64(p1qos.GetLoss()),
+			Delay:      int(p1qos.GetDelay()),
+			Jitter:     int(p1qos.GetJitter()),
+			Rate:       int(p1qos.GetRate()),
+			Buffer:     float64(p1qos.GetBuffer()),
+			Burst:      int(p1qos.GetBurst()),
+			Limit:      int(p1qos.GetLimit()),
+			TxQueuelen: int(p1qos.GetTxqueuelen()),
 		},
 		Peer2QoS: QoSConfig{
-			Loss:   float64(p2qos.GetLoss()),
-			Delay:  int(p2qos.GetDelay()),
-			Jitter: int(p2qos.GetJitter()),
-			Rate:   int(p2qos.GetRate()),
-			Buffer: float64(p2qos.GetBuffer()),
-			Burst:  int(p2qos.GetBurst()),
+			Loss:       float64(p2qos.GetLoss()),
+			Delay:      int(p2qos.GetDelay()),
+			Jitter:     int(p2qos.GetJitter()),
+			Rate:       int(p2qos.GetRate()),
+			Buffer:     float64(p2qos.GetBuffer()),
+			Burst:      int(p2qos.GetBurst()),
+			Limit:      int(p2qos.GetLimit()),
+			TxQueuelen: int(p2qos.GetTxqueuelen()),
 		},
 	}
 }
@@ -76,6 +83,8 @@ func getNodeConfigFromRequest(request *proto.NodeAddRequest) NodeConfig {
 
 type netemServer struct {
 	proto.UnimplementedNetemServer
+	// routeApplier is injectable for tests. Production uses applyRoutesToNode.
+	routeApplier func(context.Context, INetemNode, []link.RouteSpec) (int, error)
 }
 
 func (s *netemServer) ServerGetVersion(ctx context.Context, empty *empty.Empty) (*proto.VersionResponse, error) {
@@ -475,6 +484,140 @@ func (s *netemServer) LinkUpdate(ctx context.Context, request *proto.LinkRequest
 	return &proto.AckResponse{
 		Status: &proto.Status{Code: proto.StatusCode_OK},
 	}, nil
+}
+
+func (s *netemServer) LinkUpdateMany(ctx context.Context, request *proto.LinkUpdateManyRequest) (*proto.LinkUpdateManyResponse, error) {
+	project := ProjectGetOne(request.GetPrjId())
+	if project == nil {
+		return nil, &ProjectNotFoundError{request.GetPrjId()}
+	}
+
+	configs := make([]LinkConfig, 0, len(request.GetLinks()))
+	for idx, rLink := range request.GetLinks() {
+		if rLink == nil {
+			return nil, fmt.Errorf("link configuration %d is missing", idx)
+		}
+		configs = append(configs, getLinkConfig(rLink))
+	}
+
+	outcomes, err := project.Topology.LinkUpdateMany(configs, request.GetSync())
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]*proto.LinkUpdateResult, 0, len(outcomes))
+	updated := uint32(0)
+	for _, outcome := range outcomes {
+		status := &proto.Status{Code: proto.StatusCode_OK}
+		if outcome.Err != nil {
+			status.Code = proto.StatusCode_ERROR
+			status.Error = outcome.Err.Error()
+		} else {
+			updated++
+		}
+		results = append(results, &proto.LinkUpdateResult{
+			Status:         status,
+			Peer1:          outcome.Peer1,
+			Peer2:          outcome.Peer2,
+			DurationMicros: outcome.DurationMicros,
+		})
+	}
+
+	return &proto.LinkUpdateManyResponse{
+		Status:  &proto.Status{Code: proto.StatusCode_OK},
+		Results: results,
+		Updated: updated,
+	}, nil
+}
+
+func (s *netemServer) LinkSyncMany(ctx context.Context, request *proto.LinkSyncManyRequest) (*proto.LinkSyncManyResponse, error) {
+	project := ProjectGetOne(request.GetPrjId())
+	if project == nil {
+		return nil, &ProjectNotFoundError{request.GetPrjId()}
+	}
+
+	operations := make([]LinkSyncOperation, 0, len(request.GetOperations()))
+	for idx, rOp := range request.GetOperations() {
+		if rOp == nil {
+			return nil, fmt.Errorf("link sync operation %d is missing", idx)
+		}
+		if rOp.GetLink() == nil {
+			return nil, fmt.Errorf("link configuration %d is missing", idx)
+		}
+		action, err := linkSyncActionFromProto(rOp.GetAction())
+		if err != nil {
+			return nil, err
+		}
+		operations = append(operations, LinkSyncOperation{
+			Action: action,
+			Config: getLinkConfig(rOp.GetLink()),
+		})
+	}
+
+	outcomes, err := project.Topology.LinkSyncMany(operations, request.GetSync())
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]*proto.LinkSyncResult, 0, len(outcomes))
+	var added, deleted, updated uint32
+	for _, outcome := range outcomes {
+		status := &proto.Status{Code: proto.StatusCode_OK}
+		if outcome.Err != nil {
+			status.Code = proto.StatusCode_ERROR
+			status.Error = outcome.Err.Error()
+		} else {
+			switch outcome.Action {
+			case LinkSyncAdd:
+				added++
+			case LinkSyncDel:
+				deleted++
+			case LinkSyncUpdate:
+				updated++
+			}
+		}
+		results = append(results, &proto.LinkSyncResult{
+			Status:         status,
+			Action:         linkSyncActionToProto(outcome.Action),
+			Peer1:          outcome.Peer1,
+			Peer2:          outcome.Peer2,
+			DurationMicros: outcome.DurationMicros,
+		})
+	}
+
+	return &proto.LinkSyncManyResponse{
+		Status:  &proto.Status{Code: proto.StatusCode_OK},
+		Results: results,
+		Added:   added,
+		Deleted: deleted,
+		Updated: updated,
+	}, nil
+}
+
+func linkSyncActionFromProto(action proto.LinkSyncAction) (LinkSyncAction, error) {
+	switch action {
+	case proto.LinkSyncAction_LINK_SYNC_ADD:
+		return LinkSyncAdd, nil
+	case proto.LinkSyncAction_LINK_SYNC_DEL:
+		return LinkSyncDel, nil
+	case proto.LinkSyncAction_LINK_SYNC_UPDATE:
+		return LinkSyncUpdate, nil
+	default:
+		return 0, fmt.Errorf("unknown link sync action %d", action)
+	}
+}
+
+func linkSyncActionToProto(action LinkSyncAction) proto.LinkSyncAction {
+	switch action {
+	case LinkSyncAdd:
+		return proto.LinkSyncAction_LINK_SYNC_ADD
+	case LinkSyncDel:
+		return proto.LinkSyncAction_LINK_SYNC_DEL
+	case LinkSyncUpdate:
+		return proto.LinkSyncAction_LINK_SYNC_UPDATE
+	default:
+		return proto.LinkSyncAction_LINK_SYNC_ADD
+	}
 }
 
 func (s *netemServer) LinkAdd(ctx context.Context, request *proto.LinkRequest) (*proto.AckResponse, error) {

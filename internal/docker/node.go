@@ -195,6 +195,16 @@ func (n *DockerNode) invalidatePid() {
 }
 
 func (n *DockerNode) GetRunningNetns() (netns.NsHandle, error) {
+	// Fast path: the PID is cached for the lifetime of the running container.
+	// Avoid opening a Docker client (and taking its global lock) on every
+	// route installation.
+	n.mu.RLock()
+	pid := n.pid
+	n.mu.RUnlock()
+	if pid > 0 {
+		return netns.GetFromPid(pid)
+	}
+
 	// Docker is consulted only on the first call after Start(); Stop(), Kill()
 	// and Close() invalidate the cached PID.
 	client, err := NewDockerClient()
@@ -203,7 +213,7 @@ func (n *DockerNode) GetRunningNetns() (netns.NsHandle, error) {
 	}
 	defer client.Close()
 
-	pid, err := n.runningPid(client)
+	pid, err = n.runningPid(client)
 	if err != nil {
 		return netns.NsHandle(0), err
 	}
@@ -239,44 +249,10 @@ func (n *DockerNode) GetInterfaceName(ifIndex int) string {
 	return fmt.Sprintf("eth%d", ifIndex)
 }
 
-func interfacePreparationScript(ifNames []string, disableTso, enableMpls bool) (string, bool) {
-	lines := []string{"rc=0"}
-	hasWork := false
-
-	for _, ifName := range ifNames {
-		if !strings.HasPrefix(ifName, "eth") {
-			continue // not applicable to management interface
-		}
-		if disableTso {
-			hasWork = true
-			lines = append(lines, fmt.Sprintf(
-				"ethtool -K %s tx off || { echo 'ethtool failed on %s'; rc=1; }",
-				ifName, ifName,
-			))
-		}
-		if enableMpls {
-			hasWork = true
-			lines = append(lines, fmt.Sprintf(
-				"sysctl -w net.mpls.conf.%s.input=1 || { echo 'sysctl failed on %s'; rc=1; }",
-				ifName, ifName,
-			))
-		}
-	}
-
-	if !hasWork {
-		return "", false
-	}
-	lines = append(lines, "exit $rc")
-	return strings.Join(lines, "\n"), true
-}
-
-func (n *DockerNode) prepareInterfaces(client *DockerClient, ifNames []string) {
-	script, ok := interfacePreparationScript(ifNames, !n.Config.Options.Tso, n.Mpls)
-	if !ok {
-		return
-	}
-
-	if _, err := client.Exec(context.Background(), n.ID, []string{"sh", "-c", script}); err != nil {
+// prepareInterfaces applies interface-level settings directly in the node
+// network namespace. It avoids one docker exec per attached interface.
+func (n *DockerNode) prepareInterfaces(ifNames []string, namespace netns.NsHandle) {
+	if err := link.PrepareInterfaces(ifNames, namespace, !n.Config.Options.Tso, n.Mpls); err != nil {
 		n.Logger.Warnf("Unable to prepare interfaces %v: %v", ifNames, err)
 	}
 }
@@ -291,13 +267,13 @@ func (n *DockerNode) AttachInterface(ifName string, ifIndex int, configure bool)
 	n.mu.Unlock()
 
 	if configure && n.IsRunning() {
-		client, err := NewDockerClient()
+		namespace, err := n.GetNetns()
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer namespace.Close()
 
-		n.prepareInterfaces(client, []string{ifName})
+		n.prepareInterfaces([]string{ifName}, namespace)
 
 		n.mu.Lock()
 		if st := n.Interfaces[ifName]; st != nil {
@@ -321,12 +297,6 @@ func (n *DockerNode) ConfigureInterfaces() error {
 		return nil
 	}
 
-	client, err := NewDockerClient()
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
 	n.mu.Lock()
 	pending := make([]string, 0)
 	for ifName, st := range n.Interfaces {
@@ -337,7 +307,13 @@ func (n *DockerNode) ConfigureInterfaces() error {
 	n.mu.Unlock()
 
 	if len(pending) > 0 {
-		n.prepareInterfaces(client, pending)
+		namespace, err := n.GetNetns()
+		if err != nil {
+			return err
+		}
+		defer namespace.Close()
+
+		n.prepareInterfaces(pending, namespace)
 
 		n.mu.Lock()
 		for _, ifName := range pending {
@@ -552,7 +528,7 @@ func (n *DockerNode) Start() error {
 
 		if len(pendingIfNames) > 0 {
 			prepareStart := time.Now()
-			n.prepareInterfaces(client, pendingIfNames)
+			n.prepareInterfaces(pendingIfNames, targetNS)
 			n.Logger.Debugf("Start: interface prepare took %s", time.Since(prepareStart))
 		}
 	}

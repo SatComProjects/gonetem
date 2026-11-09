@@ -151,10 +151,14 @@ def _generate_stubs() -> None:
     out_dir = Path(tempfile.mkdtemp(prefix="gonetem-grpc-stubs-"))
     atexit.register(shutil.rmtree, out_dir, ignore_errors=True)
 
+    # protoc.main() does not add the well-known types bundled with grpcio-tools;
+    # the python -m entrypoint does. Pass that include path explicitly.
+    proto_include = Path(protoc.__file__).parent / "_proto"
     result = protoc.main(
         [
             "grpc_tools.protoc",
             f"-I{PROTO_FILE.parent}",
+            f"-I{proto_include}",
             f"--python_out={out_dir}",
             f"--grpc_python_out={out_dir}",
             str(PROTO_FILE),
@@ -221,6 +225,20 @@ LOSS_LINKS = f"""\
 """
 
 
+QUEUE_LIMIT_PKTS = 250
+QUEUE_TXQLEN = 1500
+UPDATED_QUEUE_LIMIT_PKTS = 750
+UPDATED_QUEUE_TXQLEN = 2000
+
+QUEUE_LINKS = f"""\
+- peer1: n1.0
+  peer2: n2.0
+  delay: 10
+  limit: {QUEUE_LIMIT_PKTS}
+  txqueuelen: {QUEUE_TXQLEN}
+"""
+
+
 def _topology(node_type: str, links: str) -> str:
     return f"""\
 nodes:
@@ -261,7 +279,7 @@ def _netem_options(qdiscs, context: str) -> dict:
     return netem[0]["options"]
 
 
-QOS_METRICS = ("Delay", "Jitter", "Loss", "Rate", "Burst")
+QOS_METRICS = ("Delay", "Jitter", "Loss", "Rate", "Burst", "Limit")
 
 
 def _fmt_qos_metric(metric: str, value: float | None) -> str:
@@ -275,6 +293,8 @@ def _fmt_qos_metric(metric: str, value: float | None) -> str:
         return f"{value:.3f} kbps"
     if metric == "Burst":
         return f"{value:.0f} B"
+    if metric == "Limit":
+        return f"{value:.0f} pkt"
     return str(value)
 
 
@@ -283,12 +303,16 @@ def _qdisc_metrics(qdiscs, context: str) -> dict[str, float]:
     tbf = [q for q in qdiscs if q.get("kind") == "tbf"]
     tbf_options = tbf[0]["options"] if len(tbf) == 1 else None
 
+    delay = options.get("delay", {})
+    loss = options.get("loss-random", {})
+
     return {
-        "Delay": options["delay"]["delay"] * 1000.0,
-        "Jitter": options["delay"]["jitter"] * 1000.0,
-        "Loss": options["loss-random"]["loss"] * 100.0,
+        "Delay": delay.get("delay", 0) * 1000.0,
+        "Jitter": delay.get("jitter", 0) * 1000.0,
+        "Loss": loss.get("loss", 0.0) * 100.0,
         "Rate": tbf_options["rate"] / 125.0 if tbf_options else 0.0,
         "Burst": float(tbf_options["burst"]) if tbf_options else 0.0,
+        "Limit": float(options.get("limit", 0)),
     }
 
 
@@ -302,6 +326,7 @@ def _qos_metric_matches(metric: str, actual: float, expected: float) -> bool:
 
 def assert_link_qos(qdiscs, *, delay: int, jitter: int, loss: float,
                     rate: int | None = None, burst: int | None = None,
+                    limit: int = 1000,
                     before: dict[str, float] | None = None,
                     print_result: bool = True,
                     context: str = "") -> dict[str, float]:
@@ -313,6 +338,7 @@ def assert_link_qos(qdiscs, *, delay: int, jitter: int, loss: float,
         "Loss": float(loss),
         "Rate": float(rate or 0),
         "Burst": float(burst or 0),
+        "Limit": float(limit),
     }
 
     if print_result:
@@ -339,6 +365,9 @@ def assert_link_qos(qdiscs, *, delay: int, jitter: int, loss: float,
     assert actual["Loss"] == pytest.approx(
         loss, abs=0.01
     ), f"{context}: unexpected loss in {qdiscs}"
+    assert actual["Limit"] == float(limit), (
+        f"{context}: unexpected netem queue limit in {qdiscs}"
+    )
 
     tbf = [q for q in qdiscs if q.get("kind") == "tbf"]
     if rate is None:
@@ -651,6 +680,21 @@ class GonetemProject:
         )
         return json.loads(response.stdout)
 
+    def txqlen(self, node: str, interface: str) -> int:
+        response = self.run_node(
+            node, ["ip", "-j", "link", "show", "dev", interface]
+        )
+        assert response.status.code == netem_pb2.StatusCode.OK, response.status.error
+        assert response.exitCode == 0, (
+            f"ip link show failed on {node}/{interface}: "
+            f"exit={response.exitCode} stderr={response.stderr!r}"
+        )
+        links = json.loads(response.stdout)
+        assert len(links) == 1, (
+            f"unexpected ip link output on {node}/{interface}: {links!r}"
+        )
+        return int(links[0]["txqlen"])
+
     def link_update(self, link) -> None:
         assert_ack(
             self.stub.LinkUpdate(
@@ -774,6 +818,55 @@ def test_link_update_changes_qdisc_parameters(project_factory):
         before=before["n2"],
         context=f"LinkUpdate - {project.node_type} - n2/eth0",
     )
+
+
+def test_link_queue_length_is_configurable(project_factory):
+    project = project_factory(QUEUE_LINKS)
+
+    for node in ("n1", "n2"):
+        assert_link_qos(
+            project.qdiscs(node, "eth0"),
+            delay=10,
+            jitter=0,
+            loss=0.0,
+            limit=QUEUE_LIMIT_PKTS,
+            context=f"Queue length - {project.node_type} - {node}/eth0 initial",
+        )
+        assert project.txqlen(node, "eth0") == QUEUE_TXQLEN, (
+            f"Queue length - {project.node_type} - {node}/eth0: "
+            f"unexpected txqueuelen"
+        )
+
+    project.link_update(
+        netem_pb2.LinkConfig(
+            peer1="n1.0",
+            peer2="n2.0",
+            peer1qos=_qos(
+                delay=10,
+                limit=UPDATED_QUEUE_LIMIT_PKTS,
+                txqueuelen=UPDATED_QUEUE_TXQLEN,
+            ),
+            peer2qos=_qos(
+                delay=10,
+                limit=UPDATED_QUEUE_LIMIT_PKTS,
+                txqueuelen=UPDATED_QUEUE_TXQLEN,
+            ),
+        )
+    )
+
+    for node in ("n1", "n2"):
+        assert_link_qos(
+            project.qdiscs(node, "eth0"),
+            delay=10,
+            jitter=0,
+            loss=0.0,
+            limit=UPDATED_QUEUE_LIMIT_PKTS,
+            context=f"Queue length - {project.node_type} - {node}/eth0 updated",
+        )
+        assert project.txqlen(node, "eth0") == UPDATED_QUEUE_TXQLEN, (
+            f"Queue length - {project.node_type} - {node}/eth0: "
+            f"unexpected txqueuelen after LinkUpdate"
+        )
 
 
 def test_link_latency_is_reflected_in_ping_rtt(project_factory):

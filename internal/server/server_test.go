@@ -57,6 +57,31 @@ func TestGetLinkConfigFromRequest_NilQoS(t *testing.T) {
 	}
 }
 
+func TestGetLinkConfigFromRequest_QueueLength(t *testing.T) {
+	cfg := getLinkConfigFromRequest(&proto.LinkRequest{
+		Link: &proto.LinkConfig{
+			Peer1: "R1",
+			Peer2: "R2",
+			Peer1Qos: &proto.LinkConfig_QoSConfig{
+				Delay:      10,
+				Limit:      750,
+				Txqueuelen: 1500,
+			},
+			Peer2Qos: &proto.LinkConfig_QoSConfig{
+				Delay:      20,
+				Limit:      900,
+				Txqueuelen: 2000,
+			},
+		},
+	})
+	if cfg.Peer1QoS.Limit != 750 || cfg.Peer1QoS.TxQueuelen != 1500 {
+		t.Errorf("peer1 queue fields were not mapped: %+v", cfg.Peer1QoS)
+	}
+	if cfg.Peer2QoS.Limit != 900 || cfg.Peer2QoS.TxQueuelen != 2000 {
+		t.Errorf("peer2 queue fields were not mapped: %+v", cfg.Peer2QoS)
+	}
+}
+
 func TestServer_Version(t *testing.T) {
 	options.InitServerConfig()
 	ctx := context.Background()
