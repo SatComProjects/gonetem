@@ -1,168 +1,514 @@
 .. _nodes:
 
-Docker nodes configuration
-==========================
+Node types and images
+=====================
 
+GoNetEm supports three node families. Which one you use is decided by the
+node's ``type`` field in the topology:
 
-Pre-configured nodes
----------------------
+.. list-table::
+   :header-rows: 1
+   :widths: 18 22 60
 
-By default, 4 kind of docker nodes have been pre-configured in gonetem
+   * - Family
+     - Topology type
+     - Implementation
+   * - Docker
+     - ``docker.<type>``
+     - A privileged container created through the Docker API, attached to the
+       topology by moving veth endpoints into its network namespace.
+   * - Switch
+     - ``ovs``
+     - A bridge inside the project's shared Open vSwitch container.
+   * - Namespace
+     - ``namespace``
+     - A bare named Linux network namespace, no container.
 
-- `router` to emulate a router thanks to FRR
-- `host` to emulate a simple machine
-- `server` to emulate a server machine with DHCP/TFTP/HTTP/DNS server
-- `p4sw` to emulate a P4 switch based on the bmv2 implementation
+This page documents the node configuration, the Docker node types shipped with
+GoNetEm and how to declare your own. For the topology-side options (``launch``,
+``ipv6``, ``volumes``, ``mgnt``, …) see :ref:`topology`; for the image
+contents see :ref:`docker-images`.
 
-These 3 nodes has a default configuration that can be modified in the ``docker.nodes``
-section of server configuration file. By default, this section looks like this:
+Why node types are configured on the server
+-------------------------------------------
 
-.. code-block:: yaml
+A topology only names a node type; the server owns the definition of what that
+type means. That separation allows the same project to run on hosts with
+different images or registries, without editing the project, and lets
+administrators add new device families globally.
 
-    docker:
-      nodes:
-        router:
-          image: mroy31/gonetem-frr
-        host:
-          image: mroy31/gonetem-host
-        server:
-          image: mroy31/gonetem-server
-        p4sw:
-          image: mroy31/gonetem-bmv2
+Node types are configured in two places:
 
+* ``docker.nodes`` — the four built-in families (``router``, ``host``,
+  ``server``, ``p4sw``);
+* ``docker.extraNodes`` — a list of additional families, referenced as
+  ``docker.<type>``.
 
-with only docker image set in the configuration. However, many other options 
-exist and can be overriden in the server configuration file. For example, this is
-the full configuration for the node ``host``:
+Pre-configured node types
+-------------------------
 
-.. code-block:: yaml
+Four Docker node types are available out of the box.
 
-    docker:
-      nodes:
-        host:
-          type: host
-          image: mroy31/gonetem-host
-          volumes: []
-          options:
-            log: true
-            tso: false
-          commands:
-            console: /bin/bash
-            shell: /bin/bash
-            loadConfig:
-            - command: network-config.py -l /tmp/custom.net.conf
-              checkFiles:
-              - /tmp/custom.net.conf
-            - command: /bin/bash /gonetem-init.sh
-              checkFiles:
-              - /gonetem-init.sh
-            saveConfig:
-            - command: network-config.py -s /tmp/custom.net.conf
-              checkFiles: []
-          configurationFiles:
-          - destSuffix: init.conf
-            source: /gonetem-init.sh
-            label: Init
-          - destSuffix: net.conf
-            source: /tmp/custom.net.conf
-            label: Network
-          - destSuffix: ntp.conf
-            source: /etc/ntpsec/ntp.conf
-            label: NTP
+``router`` — FRR router
+~~~~~~~~~~~~~~~~~~~~~~~
 
-List of parameters:
-
-- ``type`` (string): type of node (used in the topology file to declare a docker node)
-- ``image`` (string): docker image used to launch the container
-- ``volumes`` (string list): Allow to bind host path in container filesystem (like -v option in ``docker run```). The syntax is ``/host/path:/container/path`` and can be completed in the topology definition.
-- ``options``
-
-  - ``log`` (boolean): show output messages of loadConfig commands
-  - ``tso`` (boolean): set to false to disable TSO (TCP Segmentation Offload) on interfaces node
-
-- ``commands``: list of commands needed by gonetem to manage the node
-
-  - ``console``: command used by gonetem when a console is launch
-  - ``shell``: command used by gonetem when a shell is launch
-  - ``loadConfig``: list of commands used by gonetem when the node is started to load the configuration
-
-    - ``command``: command executed on the node
-    - ``checkFiles``: list of files that have to exist to launch the command
-
-  - ``saveConfig``: list of commands used by gonetem when the save command is required by the user
-  - ``configurationFiles``: list of files save in the .gnet project for this kind of node
-
-
-Define new nodes
-----------------
-
-It is also possible to declare a new kind of node than can be used in topology file, in the server
-configuration file (section ``docker.extraNodes`` as a list). The parameters are exactly the same than 
-the integrated nodes in gonetem. Example:
+Image: ``mroy31/gonetem-frr``. Runs FRR with zebra, bgpd, ospfd, pimd, ldpd,
+pbrd, bfdd and vrrpd enabled; OSPFv3/RIP/IS-IS are disabled in
+``/etc/frr/daemons``. Complete default definition:
 
 .. code-block:: yaml
 
-    docker:
-      extraNodes:
-      - type: myhost
-        image: mydocker-img
-        volumes: []
-        options:
-          log: false
-          tso: true
-        commands:
-          console: /bin/myconsole
-          shell: /bin/bash
-          loadConfig:
-          - command: my-load-script.sh
-            checkFiles: []
-          saveConfig:
-          - command: my-save-script.sh
-            checkFiles: []
-        configurationFiles:
-        - destSuffix: myappconf.conf
-          source: /path/myconf.conf
-          label: MyConf
+   router:
+     type: router
+     image: mroy31/gonetem-frr
+     volumes: []
+     options:
+       log: false
+       tso: true
+     commands:
+       console: /usr/bin/vtysh
+       shell: /bin/bash
+       loadConfig:
+       - command: /usr/lib/frr/frrinit.sh start
+         checkFiles: []
+       saveConfig:
+       - command: vtysh -w
+         checkFiles: []
+     configurationFiles:
+     - destSuffix: frr.conf
+       source: /etc/frr/frr.conf
+       label: FRR
 
-Once define in the server configuration file, you can use this new node in the topology like that:
+Behaviour:
+
+* ``console`` opens ``vtysh``; ``shell`` opens ``bash``.
+* On start, the server copies ``<node>.frr.conf`` (if present in the project)
+  to ``/etc/frr/frr.conf`` and runs ``frrinit.sh start``, which starts
+  ``watchfrr`` and all enabled daemons.
+* On save, ``vtysh -w`` writes the running configuration to
+  ``/etc/frr/frr.conf`` and the server copies it back as
+  ``<node>.frr.conf``.
+* TSO is left enabled (``tso: true``); this is accurate for a software router
+  and avoids one ioctl per interface.
+* ``vrfs``, ``vrrps`` and ``mpls`` node options are meaningful on routers.
+
+``host`` — end-user machine
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Image: ``mroy31/gonetem-host``. A general-purpose Linux host with network
+testing tools. Complete default definition:
 
 .. code-block:: yaml
 
-    nodes:
-      Host:
-        type: docker.myhost
+   host:
+     type: host
+     image: mroy31/gonetem-host
+     volumes: []
+     options:
+       log: true
+       tso: false
+     commands:
+       console: /bin/bash
+       shell: /bin/bash
+       loadConfig:
+       - command: network-config.py -l /tmp/custom.net.conf
+         checkFiles:
+         - /tmp/custom.net.conf
+       - command: /bin/bash /gonetem-init.sh
+         checkFiles:
+         - /gonetem-init.sh
+       saveConfig:
+       - command: network-config.py -s /tmp/custom.net.conf
+         checkFiles: []
+     configurationFiles:
+     - destSuffix: init.conf
+       source: /gonetem-init.sh
+       label: Init
+     - destSuffix: net.conf
+       source: /tmp/custom.net.conf
+       label: Network
+     - destSuffix: ntp.conf
+       source: /etc/ntpsec/ntp.conf
+       label: NTP
 
+Behaviour:
 
-VyOS
-````
+* On start, the server copies ``<node>.net.conf`` to
+  ``/tmp/custom.net.conf``, ``<node>.init.conf`` to ``/gonetem-init.sh`` and
+  ``<node>.ntp.conf`` to ``/etc/ntpsec/ntp.conf``.
+* ``network-config.py -l`` then applies the saved network configuration
+  (interfaces, addresses, routes, VLANs, bonds) and prints nothing.
+* ``/gonetem-init.sh`` is executed if it was provided.
+* On save, ``network-config.py -s`` regenerates
+  ``/tmp/custom.net.conf`` from the live state, then the server copies the
+  three files back into the project.
+* ``log: true`` means the output of ``loadConfig`` commands is forwarded to
+  the console (useful for scripts that print diagnostics).
+* TSO is disabled on ``eth*`` interfaces (``tso: false``), matching a normal
+  end-host NIC, and to avoid offload artefacts when capturing or shaping
+  traffic.
 
-A concrete example of this feature is the possibility to use `VyOS <https://vyos.io/>`_ router with gonetem.
-To do that:
+The ``network-config.py`` format is a JSON document describing interfaces,
+addresses, routes, bonds and VLANs. It is generated by the image itself; you
+normally do not edit it by hand, but you can: the file is plain JSON and is
+loaded at node start.
 
-1. Build VyOS docker image compatible with gonetem (look at the ``docker/README.md`` file to do that)
-2. Add this extra node configuration in the server configuration file 
+.. code-block:: json
+
+   {
+     "interfaces": {
+       "eth0": [{"address": "10.0.1.1/24", "version": 4, "kind": "PERMANENT"}]
+     },
+     "routes": [
+       {"dst": "default", "gateway": "10.0.1.254", "family": 2}
+     ],
+     "bondings": {},
+     "vlans": {}
+   }
+
+``server`` — service machine
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Image: ``mroy31/gonetem-server``. A machine that provides common network
+services. It has the same ``commands`` and the same Init/Network/NTP
+configuration files as ``host``, plus service configuration:
 
 .. code-block:: yaml
 
-    docker:
-      extraNodes:
-      - type: vyos
-        image: gonetem-vyos:1.4
-        options:
-          log: false
-          tso: true
-        commands:
-          console: su - vyos
-          shell: /bin/bash
-          loadConfig:
-          - command: /bin/bash /usr/bin/start-vyos.sh
-            checkFiles: []
-          saveConfig:
-          - command: /bin/bash /usr/bin/save-vyos-config.sh
-            checkFiles: []
-        configurationFiles:
-        - destSuffix: vyos.conf
-          source: /opt/vyatta/etc/config/config.boot
-          label: VyOS
+   configurationFiles:
+   - destSuffix: dhcpd.conf
+     source: /etc/dhcp/dhcpd.conf
+     label: DHCP
+   - destSuffix: tftpd-hpa.default
+     source: /etc/default/tftpd-hpa
+     label: TFTP
+   - destSuffix: isc-relay.default
+     source: /etc/default/isc-dhcp-relay
+     label: DHCP-RELAY
+   - destSuffix: bind.default
+     source: /etc/default/named
+     label: Bind
+   configurationFolders:
+   - destSuffix: tftp-data.tgz
+     source: /srv/tftp
+     label: TFTP-Data
+   - destSuffix: bind-etc.tgz
+     source: /etc/bind
+     label: Bind-Data
 
-Finally, restart gonetem server and after you can use ``docker.vyos`` node in your topology.
+Folders are archived inside the node with ``tar czf`` under ``/tmp`` and copied
+back into the project as a ``.tgz``. On load, the archive is copied into the
+node, extracted at ``/`` (so it restores the original absolute paths), and the
+directory is available to the service.
+
+The image runs lighttpd, isc-dhcp-server, tftpd-hpa, BIND, isc-dhcp-relay,
+pure-ftpd, NTP, iperf3 and a QUIC server. Services are not started
+automatically by GoNetEm: enable and start them from the node
+(``console``/``exec``) or from an init script, then ``save`` to capture their
+configuration.
+
+``p4sw`` — P4 software switch
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Image: ``mroy31/gonetem-bmv2``. Runs ``simple_switch_grpc`` from the bmv2
+project, with a basic IPv4 forwarding pipeline (``/models/default.json``,
+compiled from ``basic.p4``).
+
+.. code-block:: yaml
+
+   p4sw:
+     type: p4sw
+     image: mroy31/gonetem-bmv2
+     options:
+       log: false
+       tso: true
+     commands:
+       console: /usr/local/bin/simple_switch_CLI
+       shell: /bin/bash
+       loadConfig:
+       - command: /usr/local/bin/launch-sw.py
+         checkFiles: []
+       saveConfig: []
+     configurationFiles: []
+
+``launch-sw.py`` collects the ``eth*`` interfaces of the container and starts
+``simple_switch_grpc`` with one port per interface (``-i <index>@<ifname>``) and
+the default pipeline. The switch console (``simple_switch_CLI``) lets you edit
+table entries, for example:
+
+.. code-block:: text
+
+   table_add ipv4_lpm ipv4_forward 10.0.2.1/32 => 00:00:00:00:02:01 2
+   table_dump ipv4_lpm
+
+Nodes configured for ``p4sw`` do not capture configuration files.
+
+Node type configuration reference
+---------------------------------
+
+Every entry in ``docker.nodes`` and every item of ``docker.extraNodes`` uses the
+same schema.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 12 68
+
+   * - Key
+     - Type
+     - Description
+   * - ``type``
+     - string
+     - Name used after ``docker.`` in topologies. **Required for
+       extraNodes** (it is how the type is resolved). For the four built-in
+       entries the mapping key decides and this field is informational.
+   * - ``image``
+     - string
+     - Docker image. A ``:0.6.0`` tag (``IMAGE_VERSION``) is appended when the
+       name has no tag or digest. Individual topology nodes can override it
+       with ``image:``.
+   * - ``volumes``
+     - list
+     - Bind mounts applied to every node of this type
+       (``/host/path:/container/path``). Merged with node-level ``volumes``.
+   * - ``options.log``
+     - bool
+     - Forward the output of ``loadConfig`` commands to the console. Only
+       non-empty output is forwarded.
+   * - ``options.tso``
+     - bool
+     - When ``false``, the server disables the ``tx-checksum-*`` netdev
+       features of every ``eth*`` interface (the equivalent of
+       ``ethtool -K <if> tx off``) using an ioctl, without spawning a process
+       in the container. When ``true``, offloads are left untouched.
+       ``extraNodes`` default to ``true`` when ``options.tso`` is omitted.
+   * - ``commands.console``
+     - string
+     - Command started by ``console <node>``. Parsed with shell-like quoting
+       (``shlex``), so arguments are allowed.
+   * - ``commands.shell``
+     - string
+     - Command started by ``shell <node>``.
+   * - ``commands.loadConfig``
+     - list
+     - Commands executed at node start, in order. Each item has ``command``
+       (string) and ``checkFiles`` (list of paths). The command runs only if
+       **all** ``checkFiles`` exist in the container.
+   * - ``commands.saveConfig``
+     - list
+     - Commands executed when the project or node configuration is saved.
+       Same ``command``/``checkFiles`` structure. ``checkFiles`` is checked
+       before execution.
+   * - ``configurationFiles``
+     - list
+     - Files captured/restored by the project. Items: ``destSuffix``,
+       ``source``, ``label``. Stored as ``configs/<node>.<destSuffix>``.
+   * - ``configurationFolders``
+     - list
+     - Directories captured/restored. Items: ``destSuffix``, ``source``,
+       ``label``. Stored as a gzipped tar ``configs/<node>.<destSuffix>``.
+
+How configuration load works
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When a node starts (during ``run``/``reload`` or ``start``), the server calls
+``LoadConfig`` once, unless the node was already configured since it started:
+
+#. create the configured ``vrfs`` (routing tables 10, 11, …);
+#. create the VRRP macvlan interfaces and assign their addresses;
+#. copy each ``configurationFiles`` entry whose file exists in the project to
+   its ``source`` path in the container;
+#. copy and extract each ``configurationFolders`` archive;
+#. run each ``loadConfig`` command whose ``checkFiles`` all exist, with
+   ``docker.timeoutop`` as timeout;
+#. record the collected messages and mark the node as configured.
+
+The order is significant: configuration files are in place before commands run,
+which is why the FRR router simply runs ``frrinit.sh start`` after
+``/etc/frr/frr.conf`` has been copied.
+
+Configuration files are optional: a file that is not present in the project is
+skipped silently. This is how you can use the same node type with or without a
+saved configuration.
+
+How saving works
+~~~~~~~~~~~~~~~~
+
+``save`` (or ``viewConfig``, which saves into a temporary directory first):
+
+#. for every running, configured node, run the ``saveConfig`` commands;
+#. copy each ``configurationFiles`` entry that exists in the container to
+   ``configs/<node>.<destSuffix>``;
+#. archive each ``configurationFolders`` directory into
+   ``configs/<node>.<destSuffix>``.
+
+If a node is not running, it contributes nothing and its previously saved files
+in the project are preserved.
+
+Defining a new node type
+------------------------
+
+Declare it in ``docker.extraNodes`` on the server. Example: a custom machine
+with a configuration file and a start script.
+
+.. code-block:: yaml
+
+   docker:
+     extraNodes:
+     - type: myhost
+       image: myregistry/myhost:1.0
+       volumes:
+       - /srv/data:/data
+       options:
+         log: true
+         tso: true
+       commands:
+         console: /bin/myconsole
+         shell: /bin/bash
+         loadConfig:
+         - command: /bin/bash /gonetem-init.sh
+           checkFiles:
+           - /gonetem-init.sh
+         saveConfig:
+         - command: my-save-script.sh
+           checkFiles: []
+       configurationFiles:
+       - destSuffix: init.conf
+         source: /gonetem-init.sh
+         label: Init
+       - destSuffix: app.conf
+         source: /etc/myapp/app.conf
+         label: Application
+       configurationFolders:
+       - destSuffix: app-data.tgz
+         source: /var/lib/myapp
+         label: Application data
+
+Then use it in a topology:
+
+.. code-block:: yaml
+
+   nodes:
+     Host:
+       type: docker.myhost
+
+Guidelines for custom images:
+
+* The container must keep running; the ``iinit.py`` pattern used by the
+  shipped images (sleep until SIGTERM) is a good default.
+* Provide ``bash`` (or set ``commands.shell``) for the ``shell`` command.
+* Provide ``tcpdump`` for ``capture`` and ``tar`` if you declare
+  ``configurationFolders``.
+* Keep configuration under the ``source`` paths you declare, so ``save``
+  captures it.
+* Set ``options.tso`` according to the device you emulate: disable it for
+  end hosts, keep it for routers/switches.
+
+VyOS example
+~~~~~~~~~~~~
+
+VyOS can be used as a router through the extra-node mechanism. Build an image
+compatible with GoNetEm first (see :ref:`docker-images` and
+``docker/README.md``), then declare:
+
+.. code-block:: yaml
+
+   docker:
+     extraNodes:
+     - type: vyos
+       image: gonetem-vyos:1.4
+       options:
+         log: false
+         tso: true
+       commands:
+         console: su - vyos
+         shell: /bin/bash
+         loadConfig:
+         - command: /bin/bash /usr/bin/start-vyos.sh
+           checkFiles: []
+         saveConfig:
+         - command: /bin/bash /usr/bin/save-vyos-config.sh
+           checkFiles: []
+       configurationFiles:
+       - destSuffix: vyos.conf
+         source: /opt/vyatta/etc/config/config.boot
+         label: VyOS
+
+Restart the server after editing the configuration, then use
+``type: docker.vyos`` in topologies.
+
+Per-node image override
+-----------------------
+
+Any Docker node can use a different image without declaring a new type:
+
+.. code-block:: yaml
+
+   nodes:
+     R1:
+       type: docker.router
+       image: myregistry/frr:9.1-custom
+
+This is useful to test a new image on a single node. Remember to pull the image
+on the server (``docker pull``), because ``gonetem-console pull`` only pulls
+images referenced by the server configuration.
+
+The init script convention
+--------------------------
+
+The ``host`` and ``server`` types declare an init configuration file
+``<node>.init.conf`` copied to ``/gonetem-init.sh`` and executed at start. This
+is the easiest way to add per-node startup logic to a project:
+
+.. code-block:: yaml
+
+   nodes:
+     host1:
+       type: docker.host
+
+Then, inside the running project, write the script on the node and save the
+project:
+
+.. code-block:: text
+
+   [lab]> exec host1 "sh -c 'printf \"#!/bin/bash\\nip route add 10.99.0.0/16 via 10.0.1.2\\n\" > /gonetem-init.sh && chmod +x /gonetem-init.sh'"
+   [lab]> save
+
+Alternatively place ``configs/host1.init.conf`` directly in the ``.gnet``
+archive (see :ref:`project-format`).
+
+Because the file is copied into the project by the ``Init`` configuration file
+entry, it is restored and executed on every start. Nodes of custom types can
+adopt the same convention by declaring an equivalent entry.
+
+Relationship with the topology options
+--------------------------------------
+
+Some options exist both in the topology and in the node type definition. The
+rules are:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 74
+
+   * - Option
+     - Combination rule
+   * - ``image``
+     - The topology value overrides the type's image.
+   * - ``volumes``
+     - The type's volumes and the node's volumes are concatenated.
+   * - ``vrfs``, ``vrrps``, ``mpls``, ``ipv6``, ``mgnt``
+     - Node-only options; they enable features inside the container and are not
+       part of the type definition.
+   * - ``options.log``, ``options.tso``, ``commands.*``,
+       ``configurationFiles``, ``configurationFolders``
+     - Type-only options; they describe how the server manages that kind of
+       node.
+
+See also
+--------
+
+* :ref:`topology` — node options in the topology file.
+* :ref:`docker-images` — what each image contains and how to build it.
+* :ref:`project-format` — how ``configs/`` is organised.
+* :ref:`troubleshooting` — when a node does not start or its config is not
+  loaded.
