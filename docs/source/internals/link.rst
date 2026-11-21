@@ -141,15 +141,25 @@ GoNetEm owns the qdisc tree of each link endpoint:
    standalone tbf:          root (1:0) -> tbf
    tbf + netem:             root (1:0) -> tbf  (inner 1:1) -> netem (2:0)
 
-Constants:
+The handles are exposed as functions rather than mutable package variables:
 
-* ``RootParent = tc.HandleRoot`` (``ffff:fff1``);
-* ``RootHandle = 1:0``;
-* ``TbfInnerParent = 1:1``;
-* ``NetemChildHandle = 2:0``.
+* ``rootParent()`` -> ``tc.HandleRoot`` (``ffff:fff1``);
+* ``rootHandle()`` -> ``1:0``;
+* ``tbfInnerParent()`` -> ``1:1``;
+* ``netemChildHandle()`` -> ``2:0``.
 
 Because Linux allows only one root qdisc per interface, netem cannot be the root
 when rate shaping is active; it is attached under the tbf inner queue instead.
+
+File layout:
+
+* ``internal/link/qos.go`` — pure parameter model and conversions
+  (``formatPercent``, ``formatTime``, effective limits, tbf/netem qdisc
+  builders). Fully unit-tested, no namespace or netlink access.
+* ``internal/link/qdisc.go`` — namespace switch, rtnetlink session, qdisc
+  add/change/reset, ``ApplyQoS``/``ApplyQoSBatch``/``ResetQdiscs``.
+* ``internal/link/link.go``, ``route.go``, ``features.go`` — veth/bridge/netns,
+  routes and offload/MPLS preparation.
 
 Which qdiscs are installed
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -216,7 +226,10 @@ product.
 Applying QoS
 ~~~~~~~~~~~~
 
-``ApplyQoS`` is a one-operation wrapper around ``ApplyQoSBatch``. The batch:
+The server calls qdisc work through its injectable ``QoSApplier`` seam
+(``NetemTopologyManager.applyQoS``); production defaults to ``link.ApplyQoS``
+and tests use a fake applier. ``ApplyQoS`` is a one-operation wrapper around
+``ApplyQoSBatch``. The batch:
 
 #. enters the namespace once;
 #. opens **one** rtnetlink session (``tc.Open``);

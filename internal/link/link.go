@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
@@ -42,7 +43,7 @@ func withNetns(ns netns.NsHandle, fn func() error) error {
 	}
 	defer func() {
 		if err := netns.Set(orig); err != nil {
-			logger.Errorf("unable to restore original netns: %v", err)
+			logrus.WithField("module", "link").Errorf("unable to restore original netns: %v", err)
 		}
 	}()
 

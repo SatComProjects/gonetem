@@ -156,7 +156,7 @@ func TestNetemQdiscUsesQueueLimit(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			qdisc, err := netemQdisc(dev, 10, 1, 0.5, tc.limit, RootHandle, RootParent)
+			qdisc, err := netemQdisc(dev, 10, 1, 0.5, tc.limit, rootHandle(), rootParent())
 			if err != nil {
 				t.Fatalf("netemQdisc returned an error: %v", err)
 			}
