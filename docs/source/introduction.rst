@@ -239,7 +239,7 @@ Versioning
 ----------
 
 The project version is stored in ``VERSION`` and injected into both binaries at
-build time (``internal/options.VERSION``). Release ``0.8.0`` is documented
+build time (``internal/options.VERSION``). Release ``0.9.0`` is documented
 here. Two independent version numbers matter operationally:
 
 * the **binary version**, exchanged with ``ServerGetVersion`` and shown by

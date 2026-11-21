@@ -675,6 +675,14 @@ the only place that knows concrete implementations.
 Phase 9 - Hardening and release
 -------------------------------
 
+**Status: complete with a documented coverage deviation (2026-11-21).** Strict
+``revive`` (curated), ``gosec`` (triaged exceptions) and ``dupl`` are enabled;
+``govulncheck`` stays blocking; the unit suite passed ``-count=10`` and the race
+suite ``-count=3``; ADR-0001..0005 record the durable decisions. Coverage floors
+are 46 % internal / 64.5 % server with 80-100 % on critical pure logic; the
+original 60 % overall target was not reached because the interactive console/CLI
+and privileged paths dominate the remainder (ADR-0005). Released as v0.9.0.
+
 **Goal.** Make the strict quality bar permanent and cut a release from it.
 
 **Work items.**
@@ -725,9 +733,9 @@ Metrics and ratchets
      - Keep it hermetic as packages split
    * - Unit coverage (non-generated)
      - 26.5 % after Phase 0
-     - Phase 8 ratchet: 45.5 % total, 64 % server, 9 % console, 34 % Docker,
-       52 % namespace, 12 % link, 83 % OVS (measured 46.1/64.9/9.3/35.3/53.2/12.4/84.1)
-     - At least 60 % total; 80 to 90 % for critical pure logic
+     - Phase 9 ratchet: 46 % total, 64.5 % server, 9 % console, 34 % Docker,
+       52 % namespace, 12 % link, 83 % OVS (measured 46.2/64.9/9.4/35.3/53.2/12.4/84.1)
+     - 60 % overall deferred (ADR-0005); 80-100 % critical pure logic reached
    * - Race detector
      - Passes on packages that run
      - Phase 1: ``make test-race`` passes with ``-shuffle=on``
@@ -867,8 +875,8 @@ Phase status
      - Complete (2026-11-21)
      - Config value objects, constructor injection, binary composition, isolation test.
    * - 9
-     - Planned
-     - Strict gates and release.
+     - Complete (2026-11-21)
+     - Strict lint, blocking vulnerabilities, flake/race audit, ADRs, v0.9.0 release.
 
 See also
 --------
