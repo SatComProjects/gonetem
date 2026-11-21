@@ -21,7 +21,7 @@ nodes:
 		t.Fatal(err)
 	}
 
-	topology, err := LoadTopology(utils.RandString(6), dir)
+	topology, err := loadTestTopology(utils.RandString(6), dir)
 	if err != nil {
 		t.Fatalf("LoadTopology returned an error: %v", err)
 	}

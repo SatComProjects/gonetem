@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/satcomprojects/gonetem/internal/link"
-	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/satcomprojects/gonetem/internal/proto"
 	"golang.org/x/sync/errgroup"
 )
@@ -17,8 +16,7 @@ const defaultRouteConcurrency = 32
 
 // routeInstallLimit returns the number of node batches that may run in
 // parallel. A client-provided value can only lower the server-side limit.
-func routeInstallLimit(requested int) int {
-	configured := options.ServerConfig.Docker.RouteConcurrency
+func routeInstallLimit(configured, requested int) int {
 	if configured <= 0 {
 		configured = defaultRouteConcurrency
 	}
@@ -81,7 +79,7 @@ func (s *netemServer) RouteInstall(ctx context.Context, request *proto.RouteInst
 		}, nil
 	}
 
-	limit := routeInstallLimit(int(request.GetMaxConcurrency()))
+	limit := routeInstallLimit(s.config.RouteConcurrency, int(request.GetMaxConcurrency()))
 	group := new(errgroup.Group)
 	group.SetLimit(limit)
 

@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/satcomprojects/gonetem/internal/link"
-	"github.com/satcomprojects/gonetem/internal/options"
 )
 
 func vrrpInterfaceName(ifIndex, group int) string {
@@ -163,7 +162,7 @@ func (n *DockerNode) ReadConfigFiles(confDir string, timeout int) (map[string][]
 	filesDir := confDir
 	if running || configLoaded {
 		// create temp directory for the project
-		dir, err := os.MkdirTemp(options.ServerConfig.Workdir, "gonetem-config-node"+n.Name+"-")
+		dir, err := os.MkdirTemp(n.runtime.Workdir, "gonetem-config-node"+n.Name+"-")
 		if err != nil {
 			return nil, fmt.Errorf("unable to create temp folder to save node config: %w", err)
 		}

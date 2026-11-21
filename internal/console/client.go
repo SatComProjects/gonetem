@@ -22,14 +22,14 @@ func (c *NetemConsoleClient) Close() {
 	}
 }
 
-func NewClient(server string) (*NetemConsoleClient, error) {
+func NewClient(server string, tlsConfig options.TLSOptions) (*NetemConsoleClient, error) {
 	var creds = insecure.NewCredentials()
 	var opts []grpc.DialOption
 
-	if options.ConsoleConfig.Tls.Enabled {
+	if tlsConfig.Enabled {
 		var err error
 
-		creds, err = options.LoadConsoleTLSCredentials()
+		creds, err = options.LoadConsoleTLSCredentialsFor(tlsConfig)
 		if err != nil {
 			return nil, fmt.Errorf("cannot load TLS credentials: %w", err)
 		}

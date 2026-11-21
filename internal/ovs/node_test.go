@@ -11,16 +11,23 @@ import (
 	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
+var ovsTestConfigOnce sync.Once
+
+func testOvsConfig() docker.RuntimeConfig {
+	ovsTestConfigOnce.Do(options.InitServerConfig)
+	return docker.RuntimeConfigFromOptions(options.ServerConfig)
+}
+
 func newOvsInstanceForTest(prjID string) (*OvsProjectInstance, error) {
 	client, err := docker.NewDockerClient()
 	if err != nil {
 		return nil, err
 	}
-	return NewOvsInstance(client, prjID)
+	return NewOvsInstance(client, testOvsConfig(), prjID)
 }
 
 func TestNewOvsNodeWithoutInstance(t *testing.T) {
-	node, err := NewOvsNode(utils.RandString(6), "sw1", "sw1")
+	node, err := NewOvsNode(utils.RandString(6), "sw1", "sw1", "")
 	if err != nil {
 		t.Fatalf("NewOvsNode returned an error: %v", err)
 	}
@@ -99,7 +106,7 @@ func TestOvsNode_StartStop(t *testing.T) {
 		return
 	}
 
-	node, err := NewOvsNode(prjID, name, name)
+	node, err := NewOvsNode(prjID, name, name, "")
 	if err != nil {
 		t.Errorf("Unable to create ovs node: %v", err)
 		return
@@ -150,14 +157,14 @@ func TestOvsNode_AttachLink(t *testing.T) {
 		return
 	}
 
-	node1, err := NewOvsNode(prjID, utils.RandString(4), utils.RandString(4))
+	node1, err := NewOvsNode(prjID, utils.RandString(4), utils.RandString(4), "")
 	if err != nil {
 		t.Errorf("Unable to create ovs node: %v", err)
 		return
 	}
 	defer node1.Close()
 
-	node2, err := NewOvsNode(prjID, utils.RandString(4), utils.RandString(4))
+	node2, err := NewOvsNode(prjID, utils.RandString(4), utils.RandString(4), "")
 	if err != nil {
 		t.Errorf("Unable to create ovs node: %v", err)
 		return

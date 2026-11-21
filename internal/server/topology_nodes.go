@@ -297,7 +297,7 @@ func (t *NetemTopologyManager) startNode(node StartableNode) ([]string, error) {
 	}
 
 	configPath := path.Join(t.path, configDir)
-	timeout := options.ServerConfig.Docker.Timeoutop
+	timeout := t.config.DockerTimeout
 	messages, err := node.LoadConfig(configPath, timeout)
 	if err != nil {
 		return messages, fmt.Errorf("unable to load config of node %s: %w", node.GetName(), err)
@@ -352,7 +352,7 @@ func (t *NetemTopologyManager) ReadConfigFiles(nodeName string) (map[string][]by
 	}
 
 	confPath := path.Join(t.path, configDir)
-	timeout := options.ServerConfig.Docker.Timeoutop
+	timeout := t.config.DockerTimeout
 
 	return node.ReadConfigFiles(confPath, timeout)
 }

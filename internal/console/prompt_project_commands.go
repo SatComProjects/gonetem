@@ -10,7 +10,6 @@ import (
 
 	"github.com/briandowns/spinner"
 	"github.com/fatih/color"
-	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/satcomprojects/gonetem/internal/proto"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
@@ -162,8 +161,8 @@ func (p *NetemPrompt) Status(client proto.NetemClient, cmdArgs []string) {
 
 func (p *NetemPrompt) Edit(client proto.NetemClient, cmdArgs []string) {
 	// first, check editor exists
-	if _, err := p.tools.LookPath(options.ConsoleConfig.Editor); err != nil {
-		RedPrintf("Editor set in config, %s, is not found\n", options.ConsoleConfig.Editor)
+	if _, err := p.tools.LookPath(p.config.Editor); err != nil {
+		RedPrintf("Editor set in config, %s, is not found\n", p.config.Editor)
 		return
 	}
 
@@ -180,7 +179,7 @@ func (p *NetemPrompt) Edit(client proto.NetemClient, cmdArgs []string) {
 	}
 	defer os.Remove(tempFilename)
 
-	if err := editFileWithRunner(tempFilename, options.ConsoleConfig.Editor, p.tools); err != nil {
+	if err := editFileWithRunner(tempFilename, p.config.Editor, p.tools); err != nil {
 		RedPrintf("Unable to edit temp file: %v\n", err)
 		return
 	}

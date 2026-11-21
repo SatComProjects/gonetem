@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
@@ -19,10 +18,16 @@ type ProjectRegistry struct {
 	mu       sync.RWMutex
 	opsMu    sync.Mutex
 	projects map[string]*NetemProject
+	config   Config
+	factory  *NodeFactory
 }
 
-func NewProjectRegistry() *ProjectRegistry {
-	return &ProjectRegistry{projects: make(map[string]*NetemProject)}
+func NewProjectRegistry(config Config, factory *NodeFactory) *ProjectRegistry {
+	return &ProjectRegistry{
+		projects: make(map[string]*NetemProject),
+		config:   config,
+		factory:  factory,
+	}
 }
 
 // IsNameOpen reports whether a project with the display name is open.
@@ -100,7 +105,7 @@ func (r *ProjectRegistry) Open(id, name string, data []byte) (*NetemProject, err
 		return nil, fmt.Errorf("a project named %s is already open", name)
 	}
 
-	dir, err := os.MkdirTemp(options.ServerConfig.Workdir, "gonetem-"+id+"-")
+	dir, err := os.MkdirTemp(r.config.Workdir, "gonetem-"+id+"-")
 	if err != nil {
 		return nil, fmt.Errorf("unable to create temp folder for project: %w", err)
 	}
@@ -110,7 +115,7 @@ func (r *ProjectRegistry) Open(id, name string, data []byte) (*NetemProject, err
 		return nil, fmt.Errorf("unable to open project: %w", err)
 	}
 
-	topology, err := LoadTopology(id, dir)
+	topology, err := LoadTopology(id, dir, r.config, r.factory)
 	if err != nil {
 		topology.Close(nil)
 		os.RemoveAll(dir)

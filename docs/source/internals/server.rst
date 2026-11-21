@@ -19,7 +19,7 @@ Startup
 #. **configuration** — built-in defaults are loaded, then the configuration
    file is parsed if it exists (missing file: warning, defaults are used);
 #. **signal handling** — ``SIGINT`` and ``SIGTERM`` cancel the root context;
-#. **server construction** — ``server.NewServer()`` (creates the Docker client and an empty project registry);
+#. **server construction** — the binary creates the Docker client, snapshots the parsed configuration into ``server.Config`` and calls ``server.NewServer(client, config)``;
 #. **gRPC listener** in a goroutine:
 
    * TLS credentials are loaded if ``tls.enabled``; a failure exits with
@@ -54,13 +54,15 @@ collaborators:
        routeApplier func(context.Context, RouteNode, []link.RouteSpec) (int, error)
        dockerClient docker.ContainerAPI
        projects     *ProjectRegistry
+       config       Config
+       factory      *NodeFactory
    }
 
 ``routeApplier`` is a test seam for ``RouteInstall``; production uses
-``applyRoutesToNode``. ``dockerClient`` is injected by ``NewServer`` and is used
-by the image-pull and container-clean handlers. ``projects`` is the per-server
-registry (next section). Similar seams exist inside the topology manager for
-qdisc batches (``qosBatchApplier``) and node creation (``nodeFactory``/``ovsFactory``).
+``applyRoutesToNode``. ``dockerClient``, ``config``, ``factory`` and ``projects``
+are injected by ``NewServer``. Handlers read settings from ``s.config``; the
+project registry and topology manager receive the same value object. Similar
+seams exist inside the topology manager for qdisc batches (``qosBatchApplier``).
 
 The handlers are split by service area:
 
@@ -85,6 +87,30 @@ The conversion layer is important for compatibility: internal structs use Go
 types and YAML tags, protobuf messages use proto field names, and the two are
 kept independent so that the wire contract and the file format can evolve
 separately.
+
+Configuration and composition
+------------------------------
+
+``internal/options`` owns parsing, defaults, file compatibility and TLS loading.
+The binaries snapshot the parsed values into ``server.Config`` /
+``docker.RuntimeConfig`` and inject them:
+
+* ``cmd/gonetem-server`` creates the Docker client, builds
+  ``server.ConfigFromOptions(options.ServerConfig)`` and calls
+  ``server.NewServer(client, config)``;
+* ``Config`` carries workdir, Docker timeout, concurrency limits, update config,
+  pull-image list and ``docker.RuntimeConfig``;
+* ``NodeFactory`` receives the Docker client + runtime config;
+  ``NewDockerNode`` and ``NewOvsInstance`` receive the runtime config;
+  ``OvsNode`` receives the workdir;
+* ``ProjectRegistry``, the topology manager and handlers receive ``Config``;
+  they do not read ``options.ServerConfig``;
+* Tests construct ``Config`` literals or helpers, so two servers with
+  different workdirs/concurrency can coexist in one process.
+
+The console configuration is still owned by the console's config manager for
+``config set/show``; ``NewNetemPrompt`` and ``NewClient`` receive the current
+console value instead of reading it inside command handlers.
 
 Project registry
 ----------------

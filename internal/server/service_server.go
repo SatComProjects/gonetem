@@ -69,35 +69,8 @@ func (s *netemServer) ServerCleanContainers(ctx context.Context, empty *empty.Em
 	}, nil
 }
 
-func imageTypesForPull() []string {
-	images := []string{
-		options.ServerConfig.Docker.Nodes.Router.Image,
-		options.ServerConfig.Docker.Nodes.Host.Image,
-		options.ServerConfig.Docker.Nodes.Server.Image,
-		options.ServerConfig.Docker.Nodes.P4sw.Image,
-		options.ServerConfig.Docker.OvsImage,
-	}
-	for _, node := range options.ServerConfig.Docker.ExtraNodes {
-		images = append(images, node.Image)
-	}
-
-	seen := make(map[string]struct{}, len(images))
-	result := make([]string, 0, len(images))
-	for _, image := range images {
-		if image == "" {
-			continue
-		}
-		if _, ok := seen[image]; ok {
-			continue
-		}
-		seen[image] = struct{}{}
-		result = append(result, image)
-	}
-	return result
-}
-
 func (s *netemServer) ServerPullImages(empty *empty.Empty, stream proto.Netem_ServerPullImagesServer) error {
-	imageTypes := imageTypesForPull()
+	imageTypes := s.config.PullImages
 
 	client, err := s.getDockerClient()
 	if err != nil {
@@ -173,7 +146,7 @@ func (s *netemServer) ServerUpdate(empty *empty.Empty, stream proto.Netem_Server
 	defer s.updateMu.Unlock()
 
 	logger := &updateStreamLogger{stream: stream}
-	updater := update.NewUpdater(logger)
+	updater := update.NewUpdater(logger, s.config.Update)
 
 	if err := updater.Run(stream.Context()); err != nil {
 		if sendErr := stream.Send(&proto.UpdateSrvMsg{

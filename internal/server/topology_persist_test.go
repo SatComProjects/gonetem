@@ -105,7 +105,7 @@ mgntnet:
 		t.Fatal(err)
 	}
 
-	first, err := LoadTopology("RT1", dir)
+	first, err := loadTestTopology("RT1", dir)
 	if err != nil {
 		t.Fatalf("first LoadTopology returned an error: %v", err)
 	}
@@ -118,7 +118,7 @@ mgntnet:
 		t.Fatal(err)
 	}
 
-	second, err := LoadTopology("RT2", dir)
+	second, err := loadTestTopology("RT2", dir)
 	if err != nil {
 		t.Fatalf("second LoadTopology returned an error: %v", err)
 	}

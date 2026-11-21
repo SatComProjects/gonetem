@@ -82,9 +82,9 @@ type Updater struct {
 }
 
 // NewUpdater returns an Updater using the server configuration.
-func NewUpdater(logger Logger) *Updater {
+func NewUpdater(logger Logger, config options.UpdateConfig) *Updater {
 	return &Updater{
-		Config:     options.ServerConfig.Update,
+		Config:     config,
 		Logger:     logger,
 		Arch:       runtime.GOARCH,
 		InstallDir: defaultInstallDir,

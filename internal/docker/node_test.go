@@ -18,13 +18,18 @@ const (
 	NODE_TIMEOUT_OP = 10
 )
 
+func testRuntimeConfig() RuntimeConfig {
+	options.InitServerConfig()
+	return RuntimeConfigFromOptions(options.ServerConfig)
+}
+
 // newDockerNodeForTest injects the shared Docker client into the node.
 func newDockerNodeForTest(prjID, nodeType string, opts DockerNodeOptions) (*DockerNode, error) {
 	client, err := NewDockerClient()
 	if err != nil {
 		return nil, err
 	}
-	return NewDockerNode(client, prjID, nodeType, opts)
+	return NewDockerNode(client, RuntimeConfigFromOptions(options.ServerConfig), prjID, nodeType, opts)
 }
 
 // requireImageForType checks that the image configured for a node type is
@@ -32,7 +37,7 @@ func newDockerNodeForTest(prjID, nodeType string, opts DockerNodeOptions) (*Dock
 func requireImageForType(t *testing.T, nodeType string) {
 	t.Helper()
 	options.InitServerConfig()
-	config, err := getDockerConfigFromType(nodeType)
+	config, err := RuntimeConfigFromOptions(options.ServerConfig).NodeConfig(nodeType)
 	if err != nil {
 		t.Fatalf("unable to resolve node type %s: %v", nodeType, err)
 	}

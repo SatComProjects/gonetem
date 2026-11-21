@@ -123,7 +123,7 @@ func (t *NetemTopologyManager) LinkSyncMany(operations []LinkSyncOperation, sync
 		}
 
 		group := new(errgroup.Group)
-		group.SetLimit(linkCreateLimit())
+		group.SetLimit(t.linkLimit())
 		for _, idx := range indexes {
 			idx := idx
 			op := operations[idx]

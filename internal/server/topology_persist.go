@@ -7,7 +7,6 @@ import (
 	"path"
 	"path/filepath"
 
-	"github.com/satcomprojects/gonetem/internal/options"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 )
@@ -143,9 +142,9 @@ func (t *NetemTopologyManager) Save(progressCh chan TopologySaveProgressT) error
 		progressCh <- TopologySaveProgressT{Code: NODE_SAVE_COUNT, Value: len(nodes)}
 	}
 
-	timeout := options.ServerConfig.Docker.Timeoutop
+	timeout := t.config.DockerTimeout
 	g := new(errgroup.Group)
-	g.SetLimit(nodeConfigLimit())
+	g.SetLimit(t.configLimit())
 
 	for _, node := range nodes {
 		node := node

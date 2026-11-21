@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-
-	"github.com/satcomprojects/gonetem/internal/options"
 )
 
 func (o *OvsNode) ReadConfigFiles(confDir string, timeout int) (map[string][]byte, error) {
@@ -17,7 +15,7 @@ func (o *OvsNode) ReadConfigFiles(confDir string, timeout int) (map[string][]byt
 			return nil, err
 		}
 		// create temp directory for the project
-		dir, err := os.MkdirTemp(options.ServerConfig.Workdir, "gonetem-config-sw"+o.Name+"-")
+		dir, err := os.MkdirTemp(o.workdir, "gonetem-config-sw"+o.Name+"-")
 		if err != nil {
 			return nil, fmt.Errorf("unable to create temp folder to save ovs config: %w", err)
 		}

@@ -79,16 +79,13 @@ func (nIdGen *NodeIdentifierGenerator) Close() {
 // composition root (Phase 8) will construct it once and pass it down.
 type NodeFactory struct {
 	docker docker.ContainerNodeAPI
+	config docker.RuntimeConfig
 }
 
-// NewNodeFactory builds the production factory around the shared Docker
-// client. It does not contact the daemon.
-func NewNodeFactory() (*NodeFactory, error) {
-	client, err := docker.NewDockerClient()
-	if err != nil {
-		return nil, fmt.Errorf("unable to initialize Docker client: %w", err)
-	}
-	return &NodeFactory{docker: client}, nil
+// NewNodeFactory builds a factory from the injected Docker client and adapter
+// configuration. It does not contact the daemon.
+func NewNodeFactory(client docker.ContainerNodeAPI, config docker.RuntimeConfig) *NodeFactory {
+	return &NodeFactory{docker: client, config: config}
 }
 
 // CreateOvsInstance creates the project OVS instance with the factory client.
@@ -96,7 +93,7 @@ func (f *NodeFactory) CreateOvsInstance(prjID string) (*ovs.OvsProjectInstance, 
 	if f.docker == nil {
 		return nil, fmt.Errorf("docker client is not configured for OVS instance")
 	}
-	return ovs.NewOvsInstance(f.docker, prjID)
+	return ovs.NewOvsInstance(f.docker, f.config, prjID)
 }
 
 // Create builds one node from its topology configuration.
@@ -127,12 +124,12 @@ func (f *NodeFactory) Create(prjID string, name string, shortName string, config
 		if f.docker == nil {
 			return nil, fmt.Errorf("docker client is not configured for node %s", name)
 		}
-		return docker.NewDockerNode(f.docker, prjID, groups[1], options)
+		return docker.NewDockerNode(f.docker, f.config, prjID, groups[1], options)
 	}
 
 	// then test if it is a switch
 	if config.Type == "ovs" {
-		return ovs.NewOvsNode(prjID, name, shortName)
+		return ovs.NewOvsNode(prjID, name, shortName, f.config.Workdir)
 	}
 
 	// finally test if it is a pure network namespace

@@ -163,7 +163,7 @@ func (f *fakeContainerClient) counts() (create, start, stop, rm, pid int) {
 func newUnitDockerNode(t *testing.T, fake ContainerNodeAPI) *DockerNode {
 	t.Helper()
 	options.InitServerConfig()
-	node, err := NewDockerNode(fake, "prj", "host", DockerNodeOptions{
+	node, err := NewDockerNode(fake, testRuntimeConfig(), "prj", "host", DockerNodeOptions{
 		Name:       "node",
 		LazyCreate: true,
 	})
@@ -363,7 +363,7 @@ func TestDockerNode_EagerCreationUsesClientInConstructor(t *testing.T) {
 	options.InitServerConfig()
 	fake := &fakeContainerClient{createID: "cid", imagePresent: true}
 
-	node, err := NewDockerNode(fake, "prj", "host", DockerNodeOptions{Name: "node"})
+	node, err := NewDockerNode(fake, testRuntimeConfig(), "prj", "host", DockerNodeOptions{Name: "node"})
 	if err != nil {
 		t.Fatalf("NewDockerNode returned an error: %v", err)
 	}

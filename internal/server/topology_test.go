@@ -169,7 +169,7 @@ func TestTopology_UpdateLink(t *testing.T) {
 				return
 			}
 
-			topology, err := LoadTopology(prjID, dir)
+			topology, err := loadTestTopology(prjID, dir)
 			if err != nil {
 				t.Errorf("LoadTopology returns an unexpected error: %v", err)
 				return
@@ -242,7 +242,7 @@ func TestTopology_Load(t *testing.T) {
 				return
 			}
 
-			topology, err := LoadTopology(prjID, dir)
+			topology, err := loadTestTopology(prjID, dir)
 			if err != nil && !tt.expectedError {
 				t.Errorf("LoadTopology returns an unexpected error: %v", err)
 			} else if tt.expectedError {
@@ -279,7 +279,7 @@ func TestTopology_Save(t *testing.T) {
 		return
 	}
 
-	topology, err := LoadTopology(prjID, dir)
+	topology, err := loadTestTopology(prjID, dir)
 	if err != nil {
 		t.Errorf("LoadTopology returns an unexpected error: %v", err)
 	}

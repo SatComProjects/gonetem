@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/satcomprojects/gonetem/internal/proto"
 )
 
@@ -14,7 +15,7 @@ func StartRemoteConsole(server, node string, shell bool) error {
 		return fmt.Errorf("%s is not a valid identifier, prj.node expected", node)
 	}
 
-	client, err := NewClient(server)
+	client, err := NewClient(server, options.ConsoleConfig.Tls)
 	if err != nil {
 		return err
 	}

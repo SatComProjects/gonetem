@@ -21,6 +21,7 @@ type OvsNode struct {
 	Interfaces  map[string]link.IfState
 	mu          sync.RWMutex
 	instanceMu  sync.Mutex
+	workdir     string
 	// lifecycleMu serializes Start, Stop and Close so a running transition
 	// cannot overlap another one. mu still guards the interface map.
 	lifecycleMu sync.Mutex
@@ -156,9 +157,10 @@ func (o *OvsNode) Close() error {
 	return nil
 }
 
-func NewOvsNode(prjID, name, shortName string) (*OvsNode, error) {
+func NewOvsNode(prjID, name, shortName, workdir string) (*OvsNode, error) {
 	node := &OvsNode{
 		PrjID:      prjID,
+		workdir:    workdir,
 		Name:       name,
 		ShortName:  shortName,
 		Interfaces: make(map[string]link.IfState),

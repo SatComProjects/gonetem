@@ -16,11 +16,10 @@ func (t *NetemTopologyManager) ensureOvsInstance(start bool) error {
 	if t.ovsInstance == nil {
 		factory := t.ovsFactory
 		if factory == nil {
-			nodeFactory, err := NewNodeFactory()
-			if err != nil {
-				return err
+			if t.factory == nil {
+				return fmt.Errorf("OVS factory is not configured")
 			}
-			factory = nodeFactory.CreateOvsInstance
+			factory = t.factory.CreateOvsInstance
 		}
 		instance, err := factory(t.prjID)
 		if err != nil {
@@ -128,7 +127,7 @@ func (t *NetemTopologyManager) runLocked(progressCh chan TopologyRunCloseProgres
 	// 3 - start all required nodes
 	nodeStartStart := time.Now()
 	startGroup := new(errgroup.Group)
-	startGroup.SetLimit(nodeStartLimit())
+	startGroup.SetLimit(t.startLimit())
 
 	t.logger.Debug("Topo/Run: start nodes")
 	for _, node := range t.nodes {
@@ -162,7 +161,7 @@ func (t *NetemTopologyManager) runLocked(progressCh chan TopologyRunCloseProgres
 	// and restore them afterwards, so links can be scheduled independently
 	// instead of being serialized by their source node.
 	linkGroup := new(errgroup.Group)
-	linkGroup.SetLimit(linkCreateLimit())
+	linkGroup.SetLimit(t.linkLimit())
 	linkStart := time.Now()
 
 	t.logger.Debug("Topo/Run: setup links")
@@ -192,7 +191,7 @@ func (t *NetemTopologyManager) runLocked(progressCh chan TopologyRunCloseProgres
 
 	// 4 - create bridges
 	bridgeGroup := new(errgroup.Group)
-	bridgeGroup.SetLimit(linkCreateLimit())
+	bridgeGroup.SetLimit(t.linkLimit())
 	bridgeStart := time.Now()
 
 	t.logger.Debug("Topo/Run: setup bridges")
@@ -217,11 +216,11 @@ func (t *NetemTopologyManager) runLocked(progressCh chan TopologyRunCloseProgres
 
 	// 5 - configure interfaces and load node configuration
 	t.logger.Debug("Topo/Run: load configuration")
-	timeout := options.ServerConfig.Docker.Timeoutop
+	timeout := t.config.DockerTimeout
 	configPath := path.Join(t.path, configDir)
 
 	configGroup := new(errgroup.Group)
-	configGroup.SetLimit(nodeConfigLimit())
+	configGroup.SetLimit(t.configLimit())
 	configStart := time.Now()
 
 	var msgMu sync.Mutex
@@ -450,7 +449,7 @@ func (t *NetemTopologyManager) closeLocked(progressCh chan TopologyRunCloseProgr
 	t.logger.Infof("Close: removing %d nodes", len(t.nodes))
 	removeStart := time.Now()
 	g := new(errgroup.Group)
-	g.SetLimit(nodeRemoveLimit())
+	g.SetLimit(t.removeLimit())
 	var failedNodes sync.Map
 	for _, node := range t.nodes {
 		node := node

@@ -50,6 +50,7 @@ type DockerNode struct {
 	configMu       sync.Mutex
 	LocalNetnsName string
 	client         ContainerNodeAPI
+	runtime        RuntimeConfig
 	Running        bool
 	pids           pidCache
 	ConfigLoaded   bool
@@ -108,26 +109,6 @@ func (n *DockerNode) IsRunning() bool {
 	return n.Running
 }
 
-func getDockerConfigFromType(nType string) (*options.DockerNodeConfig, error) {
-	switch nType {
-	case "router":
-		return &options.ServerConfig.Docker.Nodes.Router, nil
-	case "host":
-		return &options.ServerConfig.Docker.Nodes.Host, nil
-	case "server":
-		return &options.ServerConfig.Docker.Nodes.Server, nil
-	case "p4sw":
-		return &options.ServerConfig.Docker.Nodes.P4sw, nil
-	default:
-		for _, nConfig := range options.ServerConfig.Docker.ExtraNodes {
-			if nConfig.Type == nType {
-				return &nConfig, nil
-			}
-		}
-		return nil, fmt.Errorf("docker node of type %s does not exist in the configuration", nType)
-	}
-}
-
 // dockerClient returns the injected Docker API or a clear error when a node
 // was built directly without one (some unit tests inspect pure state).
 func (n *DockerNode) dockerClient() (ContainerNodeAPI, error) {
@@ -137,8 +118,8 @@ func (n *DockerNode) dockerClient() (ContainerNodeAPI, error) {
 	return n.client, nil
 }
 
-func NewDockerNode(client ContainerNodeAPI, prjID string, nType string, dockerOpts DockerNodeOptions) (*DockerNode, error) {
-	nConfig, err := getDockerConfigFromType(nType)
+func NewDockerNode(client ContainerNodeAPI, runtime RuntimeConfig, prjID string, nType string, dockerOpts DockerNodeOptions) (*DockerNode, error) {
+	nConfig, err := runtime.NodeConfig(nType)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +127,7 @@ func NewDockerNode(client ContainerNodeAPI, prjID string, nType string, dockerOp
 	node := &DockerNode{
 		PrjID:      prjID,
 		client:     client,
+		runtime:    runtime,
 		ID:         "",
 		Name:       dockerOpts.Name,
 		ShortName:  dockerOpts.ShortName,

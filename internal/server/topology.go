@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/satcomprojects/gonetem/internal/link"
-	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/satcomprojects/gonetem/internal/ovs"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netns"
@@ -25,11 +24,11 @@ func concurrencyLimit(configured int) int {
 	return maxConcurrentNodeTask
 }
 
-func nodeCreateLimit() int { return concurrencyLimit(options.ServerConfig.Docker.CreateConcurrency) }
-func nodeStartLimit() int  { return concurrencyLimit(options.ServerConfig.Docker.StartConcurrency) }
-func nodeRemoveLimit() int { return concurrencyLimit(options.ServerConfig.Docker.RemoveConcurrency) }
-func nodeConfigLimit() int { return concurrencyLimit(options.ServerConfig.Docker.ConfigConcurrency) }
-func linkCreateLimit() int { return concurrencyLimit(options.ServerConfig.Docker.LinkConcurrency) }
+func (t *NetemTopologyManager) createLimit() int { return concurrencyLimit(t.config.CreateConcurrency) }
+func (t *NetemTopologyManager) startLimit() int  { return concurrencyLimit(t.config.StartConcurrency) }
+func (t *NetemTopologyManager) removeLimit() int { return concurrencyLimit(t.config.RemoveConcurrency) }
+func (t *NetemTopologyManager) configLimit() int { return concurrencyLimit(t.config.ConfigConcurrency) }
+func (t *NetemTopologyManager) linkLimit() int   { return concurrencyLimit(t.config.LinkConcurrency) }
 
 // Lock order, outermost first:
 //
@@ -72,6 +71,8 @@ type NetemTopologyManager struct {
 	// qosBatchApplier is injectable for tests. Production uses link.ApplyQoSBatch.
 	qosBatchApplier func(netns.NsHandle, []link.QoSOperation) ([]link.QoSOperationResult, error)
 	// nodeFactory is injectable for tests. Production uses NodeFactory.
+	config      Config
+	factory     *NodeFactory
 	nodeFactory func(prjID, name, shortName string, config NodeConfig) (Node, error)
 	ovsFactory  func(prjID string) (*ovs.OvsProjectInstance, error)
 	syncMu      sync.Mutex
@@ -97,11 +98,10 @@ func (t *NetemTopologyManager) createNode(name, shortName string, config NodeCon
 	if t.nodeFactory != nil {
 		return t.nodeFactory(t.prjID, name, shortName, config)
 	}
-	factory, err := NewNodeFactory()
-	if err != nil {
-		return nil, err
+	if t.factory == nil {
+		return nil, fmt.Errorf("node factory is not configured")
 	}
-	return factory.Create(t.prjID, name, shortName, config)
+	return t.factory.Create(t.prjID, name, shortName, config)
 }
 
 func (t *NetemTopologyManager) Check() error {
@@ -118,17 +118,14 @@ func (t *NetemTopologyManager) Check() error {
 	return nil
 }
 
-func LoadTopology(prjID, prjPath string) (*NetemTopologyManager, error) {
-	factory, err := NewNodeFactory()
-	if err != nil {
-		return nil, err
-	}
-
+func LoadTopology(prjID, prjPath string, config Config, factory *NodeFactory) (*NetemTopologyManager, error) {
 	topo := &NetemTopologyManager{
 		prjID:       prjID,
 		path:        prjPath,
 		nodes:       make([]NetemNode, 0),
 		logger:      logrus.WithField("project", prjID),
+		config:      config,
+		factory:     factory,
 		nodeFactory: factory.Create,
 		ovsFactory:  factory.CreateOvsInstance,
 		IdGenerator: &NodeIdentifierGenerator{
