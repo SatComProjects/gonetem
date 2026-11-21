@@ -3,10 +3,24 @@
 Topology engine
 ===============
 
-``NetemTopologyManager`` (``internal/server/topology.go``) is the heart of the
-server. It owns the in-memory topology, the runtime resources, and the
-synchronisation of ``network.yml``. This page documents its data structures,
-algorithms and concurrency guarantees.
+``NetemTopologyManager`` is the heart of the server. It owns the in-memory
+topology, the runtime resources, and the synchronisation of ``network.yml``.
+The implementation is split by responsibility:
+
+* ``topology.go`` — manager facade, limits, QoS/factory seams, ``Check``,
+  ``LoadTopology``.
+* ``topology_model.go`` — YAML schema, QoS/bridge/node config and pure helpers.
+* ``topology_progress.go`` — run/save progress codes and batcher, domain
+  ``NodeRunMessages``.
+* ``topology_state.go`` — node/link/bridge state queries, link index, netns
+  cache.
+* ``topology_links.go`` — link add/delete/update operations.
+* ``topology_nodes.go`` — node add/delete/start/stop and config reads.
+* ``topology_run.go`` — run/reload/close, OVS/management/bridge/link setup.
+* ``topology_persist.go`` — atomic network-file writes, synchronisation, save.
+* ``topology_load.go`` — parsing the validated file into runtime state.
+
+This page documents its data structures, algorithms and concurrency guarantees.
 
 Data structures
 ---------------
@@ -39,6 +53,18 @@ Data structures
        syncMu     sync.Mutex
        lastSynced []byte     // last content written to network.yml
    }
+
+Lock order (outermost first):
+
+.. code-block:: text
+
+   updateBatchMu -> opMu -> NetemLink.mu -> mu
+
+Never take ``opMu`` while holding a link/topology lock, never take
+``updateBatchMu`` after ``opMu``, never acquire ``mu`` before
+``NetemLink.mu``, and never call node/kernel operations while holding ``mu``.
+``syncMu`` is a leaf lock held only for the network-file write; it is acquired
+after ``mu`` is released and never nests with the topology locks.
 
 ``NetemLink`` records, per direction, whether a tbf and a netem qdisc are
 currently installed (``HasPeer1Tbf``, ``HasPeer1Netem``, …). The flags avoid
@@ -282,7 +308,7 @@ Additional rules:
 * The namespace cache is per operation (never shared across operations) and
   uses ``singleflight`` so parallel links to the same node open its namespace
   once.
-* Lock order is consistent: ``opMu`` → ``mu``/``link.mu``; never the reverse.
+* Lock order is consistent: ``opMu`` → ``link.mu`` → ``mu``; never the reverse.
   Code paths that must close a container release ``mu`` first by design.
 
 What is safe to do concurrently:
