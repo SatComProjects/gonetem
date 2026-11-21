@@ -245,7 +245,7 @@ built-in defaults; the comments explain each key.
      enabled: false
      repository: https://github.com/satcomprojects/gonetem
      branch: master
-     goVersion: "1.24.0"
+     goVersion: "1.27.4"
      workdir: ""     # empty: a temporary directory is used and removed on success
 
 Top-level keys
@@ -426,7 +426,7 @@ Self-update keys
      - Branch or tag checked out during the clone.
    * - ``update.goVersion``
      - string
-     - ``1.24.0``
+     - ``1.27.4``
      - Go toolchain downloaded from ``https://go.dev/dl`` if not already
        present in the work directory.
    * - ``update.workdir``

@@ -175,7 +175,7 @@ cover-check: cover
 	./scripts/check-coverage.sh $(COVERAGE_FILE) $(COVERAGE_THRESHOLDS)
 
 govulncheck:
-	govulncheck ./...
+	./scripts/check-vulnerabilities.sh
 
 build:
 	$(GO) build ./...

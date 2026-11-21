@@ -1,0 +1,13 @@
+# Reviewed govulncheck exceptions.
+#
+# Every reachable vulnerability must be either fixed or listed here with a
+# justification. The vulnerability gate fails on any unlisted ID.
+#
+# GO-2026-4887 / GO-2026-4883: Moby daemon AuthZ-plugin and plugin-privilege
+# checks. gonetem imports the Docker *client* packages only; govulncheck
+# reports these through package init edges, not through a client call path.
+# github.com/docker/docker v28 has no fixed release; the advisories are fixed
+# only in github.com/moby/moby/v2 2.0.0-beta.8, which is not a drop-in client
+# dependency. Revisit when the Docker client module picks up the fix.
+GO-2026-4887
+GO-2026-4883

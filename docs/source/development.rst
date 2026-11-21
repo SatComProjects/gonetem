@@ -17,7 +17,7 @@ Environment
 
 Required:
 
-* Go **1.24+** (the version declared in ``go.mod``);
+* Go **1.27.4+** (the version declared in ``go.mod``);
 * GNU Make;
 * ``golangci-lint`` v2.15+ — required by ``make check`` and CI:
 
@@ -178,10 +178,9 @@ Docker, kernel modules, network access or a running server must guard itself
 and run only in the privileged workflow. The unit suite must pass on a clean
 machine.
 
-Required pull-request checks are lint, unit tests, build and documentation.
-The vulnerability scan runs on every pull request but is advisory during the
-Phase 0 baseline (the current toolchain and dependencies have reachable
-advisories); it becomes blocking in the hardening phase. The privileged
+Required pull-request checks are lint, unit tests, build, documentation and the
+vulnerability scan. The scan is blocking; only reviewed exceptions listed in
+``.govulncheck-allow`` are accepted, each with a justification. The privileged
 integration workflow runs nightly and can be triggered manually; it is promoted
 to a required check once its pass rate is stable. Branch protection on ``develop`` and ``master`` requires these checks,
 forbids force pushes and deletions, and requires a pull request. See

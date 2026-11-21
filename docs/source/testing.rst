@@ -245,9 +245,10 @@ Every pull request to ``develop`` or ``master`` must pass:
 * **Build** - ``make build-amd64``;
 * **Docs** - Sphinx with ``-E -n -W``.
 
-The **vulnerability scan** (``govulncheck ./...``) also runs on every pull
-request but is advisory during the Phase 0 baseline; it becomes required in the
-hardening phase. The privileged integration workflow
+The **vulnerability scan** (``make govulncheck``) is a required check. It runs
+``govulncheck`` through ``scripts/check-vulnerabilities.sh`` and fails on any
+reachable advisory not listed in ``.govulncheck-allow``. Each exception must
+have a written justification. The privileged integration workflow
 (``.github/workflows/integration.yml``) is defined for nightly and manual runs.
 It pulls the node images, runs the full Go suite as root, starts
 ``gonetem-server`` and executes the Python gRPC suite. GitHub only schedules

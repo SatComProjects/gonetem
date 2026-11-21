@@ -86,6 +86,16 @@ unit and privileged integration tests in the same package and does not expose a
 hermetic unit target. Phase 1 fixes that; it does not remove the integration
 coverage.
 
+Security baseline (after the dependency upgrade)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Go **1.27.4**, Docker **v28.5.2**, ``x/net`` **v0.63.0**, gRPC **v1.85.0** and
+OpenTelemetry **v1.47.0**. ``govulncheck`` is a required CI check through
+``scripts/check-vulnerabilities.sh``. Two Docker advisories remain in
+``.govulncheck-allow``: they affect Moby daemon AuthZ/plugin code, while GoNetEm
+imports only the Docker client; the module has no fixed release. Re-review them
+when the Docker client module picks up the fix.
+
 Target architecture
 -------------------
 
@@ -308,9 +318,8 @@ fakes and adds the characterization tests needed by later phases.
 
 **Exit criteria.**
 
-* ``Lint``, ``Unit tests``, ``Build`` and ``Docs`` are green on ``develop`` and
-  required by branch protection. The vulnerability scan runs and is advisory
-  until Phase 9.
+* ``Lint``, ``Unit tests``, ``Build``, ``Docs`` and ``Vulnerability scan`` are
+  green on ``develop`` and required by branch protection.
 * ``golangci-lint run ./...`` reports zero issues for the configured set.
 * ``go test -short ./...`` passes without root, Docker images or a Docker
   daemon, and ``go test -race -short ./...`` passes.
@@ -626,8 +635,8 @@ Phase 9 - Hardening and release
   (triaged exclusions with justification), ``dupl``, and the remaining
   ``gocritic`` checks. Remove temporary ``nolint`` directives or attach a
   phase/issue to each survivor.
-* Make ``govulncheck`` blocking and triage every finding; document accepted
-  risk.
+* Keep ``govulncheck`` blocking and re-review the exceptions in
+  ``.govulncheck-allow`` when the Docker client module is upgraded.
 * Raise the coverage ratchet to the agreed target: at least 60 % of non-generated
   statements in the unit suite, and at least 80 % for critical pure packages
   (link QoS, topology validation/state, transport conversion).
@@ -679,10 +688,11 @@ Metrics and ratchets
      - 0 via ``depguard``
      - 0 as packages split
    * - Vulnerabilities
-     - 40 reachable findings with Go 1.24.13 (20 with Go 1.26.8); toolchain and
-       dependency advisories
-     - ``govulncheck`` advisory
-     - 0 reachable findings, or a documented exception; gate required
+     - 40 reachable findings with Go 1.24.13; after the Go 1.27.4/dependency
+       upgrade, 2 reviewed Docker daemon-only exceptions remain
+     - Blocking via ``scripts/check-vulnerabilities.sh`` and
+       ``.govulncheck-allow``
+     - 0 unreviewed findings; re-review the Docker exceptions on upgrade
    * - Flaky tests
      - Unknown (environment-dependent failures)
      - Classified

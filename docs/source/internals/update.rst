@@ -20,7 +20,7 @@ Configuration
      enabled: true
      repository: https://github.com/satcomprojects/gonetem
      branch: master
-     goVersion: "1.24.0"
+     goVersion: "1.27.4"
      workdir: ""
 
 See :ref:`configuration` for the meaning of each key. ``enabled`` defaults to

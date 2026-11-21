@@ -113,7 +113,7 @@ Build from source
 Toolchain
 ~~~~~~~~~
 
-* Go **1.24** or newer (``go.mod`` declares ``go 1.24.0``).
+* Go **1.27.4** or newer (``go.mod`` declares ``go 1.27.4``).
 * GNU Make.
 * ``protoc``, ``protoc-gen-go`` and ``protoc-gen-go-grpc`` if you modify the
   gRPC contract.

@@ -214,11 +214,11 @@ Required status checks on `develop` and `master`:
 - `Unit tests` — `go test -short -race`, coverage artifact.
 - `Build` — cross-compiled server and console binaries.
 - `Docs` — Sphinx with warnings as errors.
+- `Vulnerability scan` — `govulncheck` through
+  `scripts/check-vulnerabilities.sh`; only reviewed IDs in
+  `.govulncheck-allow` may remain.
 
-The vulnerability scan (`govulncheck`) runs on every change and is advisory in
-Phase 0 because the baseline toolchain and dependencies already contain
-reachable advisories; Phase 9 makes it blocking after the upgrade. The
-privileged integration workflow is defined for nightly/manual runs and becomes
+The privileged integration workflow is defined for nightly/manual runs and becomes
 active on the default branch after the next `master` release; until then use
 `make test-integration` locally. Never disable a failing check or add a
 blanket exclusion to land a change; fix the cause or get an explicit,

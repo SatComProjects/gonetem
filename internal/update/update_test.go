@@ -37,7 +37,7 @@ func TestUpdater_Disabled(t *testing.T) {
 
 func TestUpdater_UnsupportedArch(t *testing.T) {
 	u := &Updater{
-		Config: options.UpdateConfig{Enabled: true, GoVersion: "1.24.0"},
+		Config: options.UpdateConfig{Enabled: true, GoVersion: "1.27.4"},
 		Arch:   "riscv64",
 	}
 	if err := u.Run(context.Background()); !errors.Is(err, ErrUnsupportedPlatform) {
@@ -302,7 +302,7 @@ func TestUpdater_Run_LogsSteps(t *testing.T) {
 			Enabled:    true,
 			Repository: "https://invalid.example.invalid/gonetem",
 			Branch:     "master",
-			GoVersion:  "1.24.0",
+			GoVersion:  "1.27.4",
 			Workdir:    t.TempDir(),
 		},
 		Logger: logger,

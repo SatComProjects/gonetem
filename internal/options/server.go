@@ -48,7 +48,7 @@ update:
   enabled: false
   repository: https://github.com/satcomprojects/gonetem
   branch: master
-  goVersion: "1.24.0"
+  goVersion: "1.27.4"
   workdir: ""
 `
 	INITIAL_SERVER_CONFIG = `
@@ -188,7 +188,7 @@ update:
   enabled: false
   repository: https://github.com/satcomprojects/gonetem
   branch: master
-  goVersion: "1.24.0"
+  goVersion: "1.27.4"
   workdir: ""
 `
 )
