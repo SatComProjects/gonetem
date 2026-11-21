@@ -211,6 +211,42 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md) for AI agents,
 [docs/development.md](docs/development.md) and
 [docs/refactor-plan.md](docs/refactor-plan.md).
 
+Technical debt
+--------------
+
+Known, accepted debt. Each item states why it is tolerated and what would pay it
+down; open an issue before starting one. Details are in
+[ADR-0005](docs/adr/index.md) and the [refactor plan](docs/refactor-plan.md).
+
+* **Coverage outside critical logic.** Overall unit coverage is 46 % (server
+  64.5 %, OVS 84 %, Docker 34 %, link 12 %, console 9 %); critical pure logic is
+  80-100 %. The remainder is dominated by interactive console and privileged
+  adapter paths that the hermetic suite cannot execute. **Follow-up:** add fakes
+  for the remaining CLI/client paths or a privileged coverage profile.
+* **Privileged CI is advisory.** The kernel/Docker integration suite and the
+  Python gRPC end-to-end test need root, Docker and kernel modules, so they run
+  nightly/manual rather than on every pull request. **Follow-up:** promote the
+  integration workflow to a required check once its pass rate is stable.
+* **Console configuration is process-global.** `options.ConsoleConfig` and the
+  Cobra flag variables are still package-level mutable state; server
+  configuration is fully injected. **Follow-up:** pass console configuration and
+  flags through command construction when that code is next touched.
+* **OVS compatibility registry.** `internal/ovs` keeps a package-level default
+  registry and wrappers while the explicit `Registry` is already injected.
+  **Follow-up:** thread `*Registry` through composition and remove the wrappers
+  (ADR-0003).
+* **The `Node` composite still exists.** The topology factory needs the broad
+  interface to create heterogeneous nodes, while consumers use narrow roles.
+  **Follow-up:** do not add methods to `Node`; introduce a role interface instead
+  (ADR-0002).
+* **Vulnerability exceptions.** `GO-2026-4883` and `GO-2026-4887` are
+  allow-listed Docker daemon advisories that are not reachable from GoNetEm
+  paths. **Follow-up:** re-review them on every Docker module upgrade and remove
+  them when upstream fixes land.
+* **No automated proto compatibility gate.** gRPC changes are reviewed for
+  additive compatibility, but `netem.proto` has no `buf breaking`-style check.
+  **Follow-up:** add a descriptor or breaking-change check to CI.
+
 Contributing
 ------------
 
