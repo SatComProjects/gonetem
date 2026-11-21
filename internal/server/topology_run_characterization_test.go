@@ -59,7 +59,7 @@ func TestTopologyRunCloseCharacterization(t *testing.T) {
 	if second.running || second.configured || second.loaded {
 		t.Errorf("non-launch node was started/configured/loaded: %#v", second)
 	}
-	if len(messages) != 1 || messages[0].GetName() != "n1" {
+	if len(messages) != 1 || messages[0].Name != "n1" {
 		t.Errorf("unexpected node messages: %#v", messages)
 	}
 

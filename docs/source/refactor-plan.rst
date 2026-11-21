@@ -512,6 +512,12 @@ along their real responsibilities.
 Phase 5 - Topology engine
 -------------------------
 
+**Status: complete (2026-11-21).** Delivered a 133-line coordinator with
+responsibility files for model, progress, state, links, nodes, run/close,
+persistence and load; domain ``NodeRunMessages`` (protobuf conversion moved to
+the transport); atomic-write/double-sync/round-trip golden tests; and documented
+lock order. Validation/model coverage is 94.6/94.4 %, persistence 85.9 %.
+
 **Goal.** Turn the topology manager into a composition of model, validation,
 state, orchestration and persistence, with explicit dependencies.
 
@@ -698,8 +704,8 @@ Metrics and ratchets
      - Keep it hermetic as packages split
    * - Unit coverage (non-generated)
      - 26.5 % after Phase 0
-     - Phase 4 ratchet: 42.5 % total, 59.5 % server, 34 % Docker,
-       52 % namespace, 12 % link, 83 % OVS (measured 42.8/59.8/34.7/53.2/12.4/84.1)
+     - Phase 5 ratchet: 43.5 % total, 62 % server, 34 % Docker,
+       52 % namespace, 12 % link, 83 % OVS (measured 44.0/62.8/34.7/53.2/12.4/84.1)
      - At least 60 % total; 80 to 90 % for critical pure logic
    * - Race detector
      - Passes on packages that run
@@ -828,8 +834,8 @@ Phase status
      - Complete (2026-11-21)
      - Docker/namespace/OVS decomposition, collaborators, registry, fake tests.
    * - 5
-     - Planned
-     - Topology engine decomposition.
+     - Complete (2026-11-21)
+     - Topology responsibility split, domain progress, persistence goldens, lock order.
    * - 6
      - Planned
      - gRPC services and project registry.
