@@ -39,19 +39,19 @@ linters:
             - "**/internal/options/**"
           list-mode: lax
           deny:
-            - pkg: github.com/mroy31/gonetem/internal/server
+            - pkg: github.com/satcomprojects/gonetem/internal/server
               desc: "foundation packages must not depend on the server layer"
-            - pkg: github.com/mroy31/gonetem/internal/console
+            - pkg: github.com/satcomprojects/gonetem/internal/console
               desc: "foundation packages must not depend on the console"
-            - pkg: github.com/mroy31/gonetem/internal/docker
+            - pkg: github.com/satcomprojects/gonetem/internal/docker
               desc: "foundation packages must not depend on adapters"
-            - pkg: github.com/mroy31/gonetem/internal/namespace
+            - pkg: github.com/satcomprojects/gonetem/internal/namespace
               desc: "foundation packages must not depend on adapters"
-            - pkg: github.com/mroy31/gonetem/internal/ovs
+            - pkg: github.com/satcomprojects/gonetem/internal/ovs
               desc: "foundation packages must not depend on adapters"
-            - pkg: github.com/mroy31/gonetem/internal/update
+            - pkg: github.com/satcomprojects/gonetem/internal/update
               desc: "foundation packages must not depend on adapters"
-            - pkg: github.com/mroy31/gonetem/internal/proto
+            - pkg: github.com/satcomprojects/gonetem/internal/proto
               desc: "protobuf types must stay at the transport boundary"
         adapters:
           files:
@@ -61,25 +61,25 @@ linters:
             - "**/internal/update/**"
           list-mode: lax
           deny:
-            - pkg: github.com/mroy31/gonetem/internal/server
+            - pkg: github.com/satcomprojects/gonetem/internal/server
               desc: "adapters must not depend on the server layer"
-            - pkg: github.com/mroy31/gonetem/internal/console
+            - pkg: github.com/satcomprojects/gonetem/internal/console
               desc: "adapters must not depend on the console"
-            - pkg: github.com/mroy31/gonetem/internal/proto
+            - pkg: github.com/satcomprojects/gonetem/internal/proto
               desc: "protobuf types must stay at the transport boundary"
         server:
           files:
             - "**/internal/server/**"
           list-mode: lax
           deny:
-            - pkg: github.com/mroy31/gonetem/internal/console
+            - pkg: github.com/satcomprojects/gonetem/internal/console
               desc: "the server must not depend on the console"
         console:
           files:
             - "**/internal/console/**"
           list-mode: lax
           deny:
-            - pkg: github.com/mroy31/gonetem/internal/server
+            - pkg: github.com/satcomprojects/gonetem/internal/server
               desc: "the console must not depend on server internals"
   exclusions:
     presets:

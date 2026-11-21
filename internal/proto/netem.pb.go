@@ -4315,7 +4315,7 @@ const file_internal_proto_netem_proto_rawDesc = "" +
 	"\x0eLinkUpdateMany\x12\x1c.netem.LinkUpdateManyRequest\x1a\x1d.netem.LinkUpdateManyResponse\"\x00\x12I\n" +
 	"\fLinkSyncMany\x12\x1a.netem.LinkSyncManyRequest\x1a\x1b.netem.LinkSyncManyResponse\"\x00\x123\n" +
 	"\aLinkAdd\x12\x12.netem.LinkRequest\x1a\x12.netem.AckResponse\"\x00\x123\n" +
-	"\aLinkDel\x12\x12.netem.LinkRequest\x1a\x12.netem.AckResponse\"\x00B*Z(github.com/mroy31/gonetem/internal/protob\x06proto3"
+	"\aLinkDel\x12\x12.netem.LinkRequest\x1a\x12.netem.AckResponse\"\x00B2Z0github.com/satcomprojects/gonetem/internal/protob\x06proto3"
 
 var (
 	file_internal_proto_netem_proto_rawDescOnce sync.Once

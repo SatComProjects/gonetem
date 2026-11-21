@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/options"
 )
 
 func TestImageTypesForPullIncludesExtraNodes(t *testing.T) {

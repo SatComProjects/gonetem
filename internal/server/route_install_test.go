@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/proto"
 )
 
 func registerRouteProject(t *testing.T, nodes ...INetemNode) string {

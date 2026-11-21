@@ -1,4 +1,4 @@
-module github.com/mroy31/gonetem
+module github.com/satcomprojects/gonetem
 
 go 1.24.0
 

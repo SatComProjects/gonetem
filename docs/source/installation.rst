@@ -134,7 +134,7 @@ from the ``VERSION`` file:
 
 .. code-block:: bash
 
-   -ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=$(cat VERSION)"
+   -ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=$(cat VERSION)"
 
 Without the linker flag, the server and console fall back to the compiled-in
 default version. ``gonetem-console version`` and

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/mroy31/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/link"
 	"golang.org/x/sync/errgroup"
 )
 

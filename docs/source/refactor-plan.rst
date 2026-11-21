@@ -27,7 +27,7 @@ In scope:
 Out of scope:
 
 * new user features, new RPCs, new node types or new image versions;
-* changing the module path (see `Open decisions`_);
+* changing the Docker Hub image names or the external UI repository;
 * rewriting the Python end-to-end suite or the gRPC contract;
 * replacing Docker, netlink, OVS or the console UI toolkit;
 * speculative package splits that are not forced by a responsibility or a
@@ -722,11 +722,12 @@ Risk register
 Open decisions
 --------------
 
-1. **Module path.** The repository remote is
-   ``github.com/satcomprojects/gonetem`` while ``go.mod`` declares
-   ``github.com/mroy31/gonetem``. Changing it touches every import and the
-   updater. Keep it for this refactor; decide separately with a dedicated
-   migration and compatibility note.
+1. **Module path (resolved).** The module is now
+   ``github.com/satcomprojects/gonetem``. All Go imports, Makefile linker flags,
+   ``depguard`` rules and the protobuf ``go_package`` were updated together.
+   Docker Hub image names (``mroy31/gonetem-*``) and the external UI repository
+   (``mroy31/gonetem-ui``) are unchanged; they are distribution names, not Go
+   import paths.
 2. **Privileged runner.** Choose between GitHub-hosted runners with ``sudo`` and
    a self-hosted Linux runner. The integration workflow is written for the
    hosted runner first; promote it to required only after measuring stability.

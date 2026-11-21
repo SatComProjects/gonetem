@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/link"
 )
 
 func TestNamespaceNodeMetadata(t *testing.T) {

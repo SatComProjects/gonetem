@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 func TestCreateNamespaceNode(t *testing.T) {

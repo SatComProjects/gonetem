@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 func createProject(filepath string, topo TopologyTestData) error {

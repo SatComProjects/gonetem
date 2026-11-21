@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/proto"
 )
 
 func TestSplitPeer(t *testing.T) {

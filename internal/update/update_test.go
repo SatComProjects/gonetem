@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/options"
 )
 
 type testLogger struct {

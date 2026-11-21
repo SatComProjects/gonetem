@@ -8,10 +8,10 @@ import (
 	"sync"
 
 	"github.com/moby/term"
-	"github.com/mroy31/gonetem/internal/docker"
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/namespace"
-	"github.com/mroy31/gonetem/internal/ovs"
+	"github.com/satcomprojects/gonetem/internal/docker"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/namespace"
+	"github.com/satcomprojects/gonetem/internal/ovs"
 	"github.com/vishvananda/netns"
 )
 

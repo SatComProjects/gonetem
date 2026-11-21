@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/docker"
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/docker"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 func TestOVS_Instance(t *testing.T) {

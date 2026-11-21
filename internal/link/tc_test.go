@@ -6,7 +6,7 @@ import (
 
 	"github.com/florianl/go-tc"
 	"github.com/florianl/go-tc/core"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/utils"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )

@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mroy31/gonetem/internal/options"
-	pb "github.com/mroy31/gonetem/internal/proto"
-	"github.com/mroy31/gonetem/internal/server"
+	"github.com/satcomprojects/gonetem/internal/options"
+	pb "github.com/satcomprojects/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/server"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )
