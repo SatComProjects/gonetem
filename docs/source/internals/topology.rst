@@ -32,7 +32,8 @@ Data structures
        linkIndex   map[linkKey]*NetemLink  // unordered peer pair -> link
        pendingLinks map[linkKey]struct{}   // keys being added/deleted
        updateBatchMu sync.Mutex            // serialises LinkUpdateMany batches
-       qosBatchApplier func(...)           // qdisc test seam
+       qosApplier QoSApplier               // single-direction qdisc seam
+       qosBatchApplier func(...)           // batched qdisc test seam
        nodeFactory func(...) (Node, error) // Docker/namespace/OVS factory seam
        ovsFactory  func(prjID) (*ovs.OvsProjectInstance, error)
        syncMu     sync.Mutex

@@ -118,7 +118,12 @@ directly.
 Docker nodes
 ------------
 
-``internal/docker/node.go`` implements a container-backed device.
+``internal/docker/node.go`` implements a container-backed device. The adapter
+is split by responsibility: ``node.go`` (type/constructor/identity/status),
+``node_lifecycle.go``, ``node_netns.go``, ``node_interfaces.go``,
+``node_exec.go``, ``node_config.go`` and ``node_copy.go``. ``pidCache`` and
+``interfaceTable`` are the small stateful collaborators; both are race-tested
+and neither constructs a Docker client.
 
 Creation
 ~~~~~~~~
@@ -298,13 +303,21 @@ OVS is split into two objects:
   project, shared by all switches;
 * ``OvsNode`` (``internal/ovs/node.go``) — one bridge inside that container.
 
+Both files are split by responsibility (``instance_bridge.go``,
+``instance_exec.go``, ``instance_config.go``; ``node_interfaces.go``,
+``node_exec.go``, ``node_config.go``). ``Registry``
+(``internal/ovs/registry.go``) owns the per-project instances behind a mutex.
+The package-level ``NewOvsInstance``/``GetOvsInstance``/``CloseOvsInstance``
+helpers are thin wrappers over a documented private default registry until the
+composition root injects a registry in a later phase.
+
 Instance
 ~~~~~~~~
 
 ``NewOvsInstance(client, prjID)``:
 
-#. refuses to create a second instance for the same project (global mutex and
-   map);
+#. refuses to create a second instance for the same project (``Registry`` lock
+   and map);
 #. verifies the OVS image is present;
 #. creates a container named ``ntm<prjID>.ovs`` with no network and a minimal
    port set.
@@ -379,7 +392,11 @@ Namespace nodes
 ---------------
 
 ``internal/namespace/node.go`` implements a node that is only a network
-namespace.
+namespace. The adapter is split into ``node.go`` (type/identity),
+``netns.go``, ``interfaces.go``, ``exec.go``, ``config.go`` and ``copy.go``.
+A ``commandExecutor`` seam wraps ``os/exec``; production keeps the exact
+``exec.Command``/``CommandContext`` argv, stdio and exit-code semantics, and
+unit tests inject a fake.
 
 Namespace lifecycle
 ~~~~~~~~~~~~~~~~~~~

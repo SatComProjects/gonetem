@@ -434,6 +434,11 @@ constructed at the edge.
 Phase 3 - Link and QoS domain
 -----------------------------
 
+**Status: complete (2026-11-21).** Delivered the pure ``qos.go`` /
+kernel-facing ``qdisc.go`` split, immutable handle functions, shared tbf builder,
+``QoSApplier`` server seam, 100 % pure-QoS statement coverage and
+``FuzzFormatTime``/``FuzzSplitPeer``. Merged in #28.
+
 **Goal.** Separate pure traffic-control policy from kernel I/O and make both
 testable.
 
@@ -466,6 +471,12 @@ testable.
 
 Phase 4 - Node adapters
 -----------------------
+
+**Status: complete (2026-11-21).** Delivered the Docker/namespace file split,
+``pidCache``/``interfaceTable``/``commandExecutor`` collaborators with race
+tests, the OVS instance/node split, and a ``Registry`` type with compatibility
+wrappers. Fake-backed coverage is 34.7 % Docker, 53.2 % namespace and 84.1 %
+OVS. Merged in #29 (OVS) and #30 (Docker/namespace).
 
 **Goal.** Decompose the 1046-line Docker node and the namespace/OVS adapters
 along their real responsibilities.
@@ -687,7 +698,8 @@ Metrics and ratchets
      - Keep it hermetic as packages split
    * - Unit coverage (non-generated)
      - 26.5 % after Phase 0
-     - Phase 1 ratchet: 32.5 % total, 59 % server (measured 32.8/59.5)
+     - Phase 4 ratchet: 42.5 % total, 59.5 % server, 34 % Docker,
+       52 % namespace, 12 % link, 83 % OVS (measured 42.8/59.8/34.7/53.2/12.4/84.1)
      - At least 60 % total; 80 to 90 % for critical pure logic
    * - Race detector
      - Passes on packages that run
@@ -810,11 +822,11 @@ Phase status
      - Complete (2026-11-21)
      - Role interfaces, Docker API injection, NodeFactory, contract tests.
    * - 3
-     - Planned
-     - Link/QoS split.
+     - Complete (2026-11-21)
+     - QoS split, QoSApplier seam, 100 % pure-QoS coverage, fuzz tests.
    * - 4
-     - Planned
-     - Node adapter decomposition.
+     - Complete (2026-11-21)
+     - Docker/namespace/OVS decomposition, collaborators, registry, fake tests.
    * - 5
      - Planned
      - Topology engine decomposition.
