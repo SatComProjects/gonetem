@@ -52,6 +52,31 @@ func RequireDocker(t testing.TB) {
 	}
 }
 
+// RequireMPLS skips the test unless the host exposes the MPLS sysctls used by
+// the node images and link preparation. Load the modules with:
+//
+//	sudo modprobe mpls_router mpls_iptunnel
+//
+// Some container runtimes still reject these sysctls even when the host exposes
+// them; in that case the test is skipped with the runtime error.
+func RequireMPLS(t testing.TB) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("integration test: requires MPLS sysctls")
+	}
+	for _, path := range []string{
+		"/proc/sys/net/mpls/platform_labels",
+		"/proc/sys/net/mpls/conf/lo/input",
+	} {
+		if _, err := os.Stat(path); err != nil {
+			require(t, false,
+				"MPLS sysctls unavailable (%s); run: sudo modprobe mpls_router mpls_iptunnel",
+				path)
+			return
+		}
+	}
+}
+
 // RequireImage skips the test unless the Docker daemon is reachable and the
 // given image is present locally.
 func RequireImage(t testing.TB, image string) {

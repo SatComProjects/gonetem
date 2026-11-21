@@ -187,10 +187,10 @@ Additional rules:
 | End-to-end | `pytest -s tests/test_grpc_link_qos.py` | Running server; validates user-visible behaviour. |
 
 - A test that needs root, Docker, a kernel module or a running server is an
-  integration test: guard it with `testutil.RequireRoot`, `RequireDocker` or
-  `RequireImage` so the unit suite stays hermetic and the privileged suite fails
-  when `GONETEM_REQUIRE_INTEGRATION=1` is set. It must still run in the
-  integration job.
+  integration test: guard it with `testutil.RequireRoot`, `RequireDocker`,
+  `RequireImage` or `RequireMPLS` so the unit suite stays hermetic and the
+  privileged suite fails when `GONETEM_REQUIRE_INTEGRATION=1` is set. It must
+  still run in the integration job.
 - Prefer fakes at consumer-defined interfaces over mocking external commands.
   Existing seams include `routeApplier`, `qosBatchApplier`, the topology node
   factory, injected nodes and `Updater` configuration.

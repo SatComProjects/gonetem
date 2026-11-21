@@ -93,7 +93,8 @@ make cover-check        # coverage profile + per-package ratchet
 ```
 
 - Unit tests run with `-short`; integration tests guard themselves with the
-  `internal/testutil` helpers (`RequireRoot`, `RequireDocker`, `RequireImage`).
+  `internal/testutil` helpers (`RequireRoot`, `RequireDocker`, `RequireImage`,
+  `RequireMPLS`).
   Set `GONETEM_REQUIRE_INTEGRATION=1` to turn capability skips into failures;
   the privileged workflow does this.
 - Kernel-facing tests use private namespaces and clean up with `t.Cleanup`.

@@ -66,7 +66,9 @@ Test helpers
 
 * ``RequireRoot(t)`` — skip unless the test runs as root;
 * ``RequireDocker(t)`` — skip unless a Docker daemon is reachable;
-* ``RequireImage(t, image)`` — skip unless the image is present locally.
+* ``RequireImage(t, image)`` — skip unless the image is present locally;
+* ``RequireMPLS(t)`` — skip unless the MPLS sysctls are available
+  (``sudo modprobe mpls_router mpls_iptunnel``).
 
 These helpers skip with an explicit capability message. Set
 ``GONETEM_REQUIRE_INTEGRATION=1`` (the privileged workflow does) to turn those
@@ -140,8 +142,9 @@ Writing a new test
   factory; ``Updater`` exposes its configuration.
 * If the test needs the kernel, use a private namespace
   (``setUpNetlinkTest``) and ``t.Cleanup``/defer to remove everything.
-* If it needs root, Docker or an image, use the ``testutil`` capability helpers
-  instead of a raw ``testing.Short`` block or a bespoke ``skipUnlessRoot``.
+* If it needs root, Docker, an image or MPLS sysctls, use the ``testutil``
+  capability helpers instead of a raw ``testing.Short`` block or a bespoke
+  ``skipUnlessRoot``.
 * Concurrency tests should run under ``-race`` and use timeouts/channels rather
   than sleeps where possible.
 * Name tests ``Test<Unit>_<Behaviour>`` and keep one behaviour per test.

@@ -262,6 +262,9 @@ func TestDockerNode_StartStop(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
+			if tt.mpls {
+				testutil.RequireMPLS(t)
+			}
 			prjID := utils.RandString(4)
 			options := DockerNodeOptions{
 				Name: tt.name,
@@ -455,6 +458,9 @@ func TestDockerNode_Save(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
+			if tt.mpls {
+				testutil.RequireMPLS(t)
+			}
 			prjID := utils.RandString(4)
 			config := DockerNodeOptions{
 				Name: tt.name,

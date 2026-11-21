@@ -380,7 +380,8 @@ Troubleshooting the development environment
      - ``go install google.golang.org/protobuf/cmd/protoc-gen-go@latest`` and
        ensure ``$GOPATH/bin`` is in ``PATH``.
    * - tests skipped
-     - Kernel tests call ``skipUnlessRoot``; run with ``sudo``.
+     - Capability tests use ``internal/testutil``; run with ``sudo`` and load
+       MPLS with ``sudo modprobe mpls_router mpls_iptunnel`` when needed.
    * - stale containers after a crash
      - ``gonetem-console clean`` or ``docker rm -f $(docker ps -aq --filter
        name=ntm)``.
