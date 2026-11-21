@@ -99,4 +99,4 @@ The manual is organised in five parts. If you are new to GoNetEm, read [Introduc
 - Source code: <https://github.com/satcomprojects/gonetem>
 - Graphical user interface: <https://github.com/mroy31/gonetem-ui>
 - License: GNU General Public License v3.0 or later (see `COPYING`)
-- Version documented here: **0.9.0**
+- Version documented here: **0.9.1**
