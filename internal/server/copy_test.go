@@ -59,7 +59,6 @@ func (s *copyToStreamStub) RecvMsg(any) error            { return nil }
 
 type copyFromStreamStub struct {
 	messages []*proto.CopyMsg
-	err      error
 }
 
 func (s *copyFromStreamStub) Send(msg *proto.CopyMsg) error {

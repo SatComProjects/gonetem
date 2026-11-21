@@ -156,12 +156,12 @@ func (n *NamespaceNode) ConfigureInterfaces() error {
 	return nil
 }
 
-func (n *NamespaceNode) AttachMgntInterface(ifName string, ns netns.NsHandle, IPAddress string) error {
+func (n *NamespaceNode) AttachMgntInterface(ifName string, ns netns.NsHandle, ipAddress string) error {
 	n.mu.Lock()
 	n.Interfaces[ifName] = link.IFSTATE_UP
 	n.mu.Unlock()
 
-	if err := link.IpAddressAdd(ifName, ns, IPAddress); err != nil {
+	if err := link.IpAddressAdd(ifName, ns, ipAddress); err != nil {
 		n.mu.Lock()
 		delete(n.Interfaces, ifName)
 		n.mu.Unlock()

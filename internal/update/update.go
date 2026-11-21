@@ -132,7 +132,7 @@ func (u *Updater) Run(ctx context.Context) (err error) {
 		return err
 	}
 
-	if err := u.install(ctx, workdir); err != nil {
+	if err := u.install(workdir); err != nil {
 		return err
 	}
 
@@ -473,7 +473,7 @@ func (u *Updater) build(ctx context.Context, workdir, gobin string) error {
 //
 // The makefile `install-<arch>` target is not used: it stops gonetem.service,
 // which kills the server running the update. The service is restarted later.
-func (u *Updater) install(ctx context.Context, workdir string) error {
+func (u *Updater) install(workdir string) error {
 	installDir := u.InstallDir
 	if installDir == "" {
 		installDir = defaultInstallDir

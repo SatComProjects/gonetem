@@ -84,7 +84,7 @@ type NetemPrompt struct {
 
 func (p *NetemPrompt) RegisterCommands() {
 	p.commands["capture"] = &NetemCommand{
-		Desc:  "Capture trafic on an interface",
+		Desc:  "Capture traffic on an interface",
 		Usage: "capture <node_name>.<if_number>",
 		Args:  []string{`^\w+\.\d+$`},
 		Run: func(p *NetemPrompt, cmdArgs []string) {
@@ -486,10 +486,13 @@ func (p *NetemPrompt) CopyTo(srcPath, destNode, destPath string) {
 			break
 		}
 
-		stream.Send(&proto.CopyMsg{
+		if err := stream.Send(&proto.CopyMsg{
 			Code: proto.CopyMsg_DATA,
 			Data: buffer[:n],
-		})
+		}); err != nil {
+			RedPrintf("Error in CopyTo cmd: %v\n", err)
+			return
+		}
 	}
 
 	ack, err := stream.CloseAndRecv()
@@ -497,7 +500,7 @@ func (p *NetemPrompt) CopyTo(srcPath, destNode, destPath string) {
 		RedPrintf("Error in CopyTo cmd: %v\n", err)
 		return
 	} else if ack.GetStatus().GetCode() == proto.StatusCode_ERROR {
-		RedPrintf("CopyTo returns an error: %s\n", string(ack.Status.Error))
+		RedPrintf("CopyTo returns an error: %s\n", ack.Status.Error)
 	}
 }
 
@@ -563,9 +566,14 @@ func (p *NetemPrompt) Capture(cmdArgs []string) {
 
 			switch msg.GetCode() {
 			case proto.CaptureSrvMsg_STDOUT:
-				wIn.Write(msg.GetData())
+				if _, err := wIn.Write(msg.GetData()); err != nil {
+					// The capture process is gone (the pipe is closed);
+					// there is nothing left to forward.
+					return
+				}
 			case proto.CaptureSrvMsg_ERROR:
-				cmd.Process.Signal(os.Kill)
+				// Best-effort termination of the capture process.
+				_ = cmd.Process.Signal(os.Kill)
 				return
 			}
 		}
@@ -790,10 +798,8 @@ func (p *NetemPrompt) Start(client proto.NetemClient, cmdArgs []string) {
 	ack, err := client.NodeStart(p.getCancelContext(), &proto.NodeRequest{PrjId: p.prjID, Node: cmdArgs[0]})
 	if err != nil {
 		RedPrintf("Unable to start node: %v\n", err)
-	} else {
-		if ack.Status.Code == proto.StatusCode_ERROR {
-			MagentaPrintf(ack.Status.Error + "\n")
-		}
+	} else if ack.Status.Code == proto.StatusCode_ERROR {
+		MagentaPrintf(ack.Status.Error + "\n")
 	}
 }
 
@@ -801,10 +807,8 @@ func (p *NetemPrompt) StartAll(client proto.NetemClient, cmdArgs []string) {
 	ack, err := client.TopologyStartAll(context.Background(), &proto.ProjectRequest{Id: p.prjID})
 	if err != nil {
 		RedPrintf("Unable to start all nodes: %v\n", err)
-	} else {
-		if ack.Status.Code == proto.StatusCode_ERROR {
-			MagentaPrintf(ack.Status.Error + "\n")
-		}
+	} else if ack.Status.Code == proto.StatusCode_ERROR {
+		MagentaPrintf(ack.Status.Error + "\n")
 	}
 }
 
@@ -812,10 +816,8 @@ func (p *NetemPrompt) Stop(client proto.NetemClient, cmdArgs []string) {
 	ack, err := client.NodeStop(context.Background(), &proto.NodeRequest{PrjId: p.prjID, Node: cmdArgs[0]})
 	if err != nil {
 		RedPrintf("Unable to stop node: %v\n", err)
-	} else {
-		if ack.Status.Code == proto.StatusCode_ERROR {
-			MagentaPrintf(ack.Status.Error + "\n")
-		}
+	} else if ack.Status.Code == proto.StatusCode_ERROR {
+		MagentaPrintf(ack.Status.Error + "\n")
 	}
 }
 
@@ -823,10 +825,8 @@ func (p *NetemPrompt) StopAll(client proto.NetemClient, cmdArgs []string) {
 	ack, err := client.TopologyStopAll(context.Background(), &proto.ProjectRequest{Id: p.prjID})
 	if err != nil {
 		RedPrintf("Unable to stop all nodes: %v\n", err)
-	} else {
-		if ack.Status.Code == proto.StatusCode_ERROR {
-			MagentaPrintf(ack.Status.Error + "\n")
-		}
+	} else if ack.Status.Code == proto.StatusCode_ERROR {
+		MagentaPrintf(ack.Status.Error + "\n")
 	}
 }
 
@@ -834,10 +834,8 @@ func (p *NetemPrompt) Restart(client proto.NetemClient, cmdArgs []string) {
 	ack, err := client.NodeRestart(context.Background(), &proto.NodeRequest{PrjId: p.prjID, Node: cmdArgs[0]})
 	if err != nil {
 		RedPrintf("Unable to restart node: %v\n", err)
-	} else {
-		if ack.Status.Code == proto.StatusCode_ERROR {
-			MagentaPrintf(ack.Status.Error + "\n")
-		}
+	} else if ack.Status.Code == proto.StatusCode_ERROR {
+		MagentaPrintf(ack.Status.Error + "\n")
 	}
 }
 
@@ -999,8 +997,7 @@ func (p *NetemPrompt) Reload(client proto.NetemClient, cmdArgs []string) {
 			break
 		}
 
-		switch msg.Code {
-		case proto.TopologyRunMsg_NODE_MESSAGES:
+		if msg.Code == proto.TopologyRunMsg_NODE_MESSAGES {
 			s.Stop()
 			for _, nMessages := range msg.NodeMessages {
 				if len(nMessages.Messages) > 0 {
@@ -1025,7 +1022,8 @@ func (p *NetemPrompt) Close() error {
 		}()
 		select {
 		case <-time.After(100 * time.Millisecond):
-			cmd.Process.Kill()
+			// Best-effort kill after the grace period.
+			_ = cmd.Process.Kill()
 		case <-done:
 		}
 	}

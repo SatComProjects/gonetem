@@ -159,7 +159,7 @@ func TestNetemQdiscUsesQueueLimit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("netemQdisc returned an error: %v", err)
 			}
-			if got := qdisc.Attribute.Netem.Qopt.Limit; got != tc.want {
+			if got := qdisc.Netem.Qopt.Limit; got != tc.want {
 				t.Fatalf("netem limit = %d, expected %d", got, tc.want)
 			}
 		})

@@ -327,7 +327,7 @@ func (n *DockerNode) ConfigureInterfaces() error {
 	return nil
 }
 
-func (n *DockerNode) AttachMgntInterface(ifName string, ns netns.NsHandle, IPAddress string) error {
+func (n *DockerNode) AttachMgntInterface(ifName string, ns netns.NsHandle, ipAddress string) error {
 	n.mu.Lock()
 	n.Interfaces[ifName] = &DockerInterface{
 		Configured: true,
@@ -336,7 +336,7 @@ func (n *DockerNode) AttachMgntInterface(ifName string, ns netns.NsHandle, IPAdd
 	n.mu.Unlock()
 
 	// Set IP address
-	if err := link.IpAddressAdd(ifName, ns, IPAddress); err != nil {
+	if err := link.IpAddressAdd(ifName, ns, ipAddress); err != nil {
 		return err
 	}
 
@@ -977,7 +977,11 @@ func (n *DockerNode) Close() error {
 
 	n.nsMu.Lock()
 	if n.LocalNetnsName != "" {
-		link.DeleteNetns(n.LocalNetnsName)
+		if err := link.DeleteNetns(n.LocalNetnsName); err != nil {
+			// Cleanup is best effort: the container itself is already gone,
+			// so report the leak but do not fail Close.
+			n.Logger.Warnf("unable to delete netns %s: %v", n.LocalNetnsName, err)
+		}
 		n.LocalNetnsName = ""
 	}
 	n.nsMu.Unlock()
@@ -1002,7 +1006,7 @@ func getDockerConfigFromType(nType string) (*options.DockerNodeConfig, error) {
 				return &nConfig, nil
 			}
 		}
-		return nil, fmt.Errorf("docker node of type %s does not exist in the configuraiton", nType)
+		return nil, fmt.Errorf("docker node of type %s does not exist in the configuration", nType)
 	}
 }
 

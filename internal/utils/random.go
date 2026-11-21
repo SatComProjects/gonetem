@@ -1,24 +1,13 @@
 package utils
 
-import (
-	"math/rand"
-	"time"
-)
+import "math/rand"
 
-var (
-	isInit      = false
-	letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-)
+var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-func initRand() {
-	rand.Seed(time.Now().UnixNano())
-}
-
+// RandString returns a random identifier of n characters. It is not suitable
+// for security-sensitive use; the math/rand package is automatically seeded
+// since Go 1.20.
 func RandString(n int) string {
-	if !isInit {
-		initRand()
-		isInit = true
-	}
 	b := make([]rune, n)
 	for i := range b {
 		b[i] = letterRunes[rand.Intn(len(letterRunes))]

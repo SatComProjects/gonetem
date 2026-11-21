@@ -184,23 +184,29 @@ func (s *netemServer) ServerPullImages(empty *empty.Empty, stream proto.Netem_Se
 	for _, imgT := range imageTypes {
 		imgID := options.GetDockerImageId(imgT)
 
-		stream.Send(&proto.PullSrvMsg{
+		if err := stream.Send(&proto.PullSrvMsg{
 			Code:  proto.PullSrvMsg_START,
 			Image: imgID,
-		})
+		}); err != nil {
+			return err
+		}
 
 		if err := client.ImagePull(ctx, imgID); err != nil {
-			stream.Send(&proto.PullSrvMsg{
+			if sendErr := stream.Send(&proto.PullSrvMsg{
 				Code:  proto.PullSrvMsg_ERROR,
 				Image: imgID,
 				Error: fmt.Sprintf("%s: %v", imgID, err),
-			})
+			}); sendErr != nil {
+				return sendErr
+			}
 			continue
 		}
-		stream.Send(&proto.PullSrvMsg{
+		if err := stream.Send(&proto.PullSrvMsg{
 			Code:  proto.PullSrvMsg_OK,
 			Image: imgID,
-		})
+		}); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -212,19 +218,25 @@ type updateStreamLogger struct {
 }
 
 func (l *updateStreamLogger) Step(step, message string) {
-	l.stream.Send(&proto.UpdateSrvMsg{
+	if err := l.stream.Send(&proto.UpdateSrvMsg{
 		Code:    proto.UpdateSrvMsg_START,
 		Step:    step,
 		Message: message,
-	})
+	}); err != nil {
+		// Progress reporting is best effort: the update itself continues.
+		logrus.Warnf("unable to send update step to client: %v", err)
+	}
 }
 
 func (l *updateStreamLogger) Log(step, line string) {
-	l.stream.Send(&proto.UpdateSrvMsg{
+	if err := l.stream.Send(&proto.UpdateSrvMsg{
 		Code:    proto.UpdateSrvMsg_LOG,
 		Step:    step,
 		Message: line,
-	})
+	}); err != nil {
+		// Progress reporting is best effort: the update itself continues.
+		logrus.Warnf("unable to send update log to client: %v", err)
+	}
 }
 
 // updateMutex serializes updates: two concurrent updates would build and
@@ -244,18 +256,22 @@ func (s *netemServer) ServerUpdate(empty *empty.Empty, stream proto.Netem_Server
 	updater := update.NewUpdater(logger)
 
 	if err := updater.Run(stream.Context()); err != nil {
-		stream.Send(&proto.UpdateSrvMsg{
+		if sendErr := stream.Send(&proto.UpdateSrvMsg{
 			Code:    proto.UpdateSrvMsg_ERROR,
 			Message: err.Error(),
-		})
+		}); sendErr != nil {
+			return sendErr
+		}
 		return nil
 	}
 
-	stream.Send(&proto.UpdateSrvMsg{
+	if err := stream.Send(&proto.UpdateSrvMsg{
 		Code:    proto.UpdateSrvMsg_OK,
 		Step:    update.STEP_COMPLETE,
 		Message: "gonetem has been updated, restart gonetem-server to use the new version",
-	})
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -310,6 +326,14 @@ func (s *netemServer) ProjectClose(request *proto.ProjectRequest, stream proto.N
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Progress reporting is best effort: keep draining progressCh even if the
+	// client stopped reading, otherwise ProjectClose would block writing to it.
+	sendProgress := func(msg *proto.ProjectCloseMsg) {
+		if err := stream.Send(msg); err != nil {
+			logrus.Warnf("unable to send project close progress: %v", err)
+		}
+	}
+
 	go func() {
 		for {
 			select {
@@ -318,25 +342,25 @@ func (s *netemServer) ProjectClose(request *proto.ProjectRequest, stream proto.N
 			case p := <-progressCh:
 				switch p.Code {
 				case NODE_COUNT:
-					stream.Send(&proto.ProjectCloseMsg{
+					sendProgress(&proto.ProjectCloseMsg{
 						Code:  proto.ProjectCloseMsg_NODE_COUNT,
 						Total: int32(p.Value),
 					})
 
 				case BRIDGE_COUNT:
-					stream.Send(&proto.ProjectCloseMsg{
+					sendProgress(&proto.ProjectCloseMsg{
 						Code:  proto.ProjectCloseMsg_BRIDGE_COUNT,
 						Total: int32(p.Value),
 					})
 
 				case CLOSE_NODE:
-					stream.Send(&proto.ProjectCloseMsg{
+					sendProgress(&proto.ProjectCloseMsg{
 						Code:  proto.ProjectCloseMsg_NODE_CLOSE,
 						Total: int32(p.Value),
 					})
 
 				case CLOSE_BRIDGE:
-					stream.Send(&proto.ProjectCloseMsg{
+					sendProgress(&proto.ProjectCloseMsg{
 						Code:  proto.ProjectCloseMsg_BRIDGE_CLOSE,
 						Total: int32(p.Value),
 					})
@@ -353,6 +377,14 @@ func (s *netemServer) ProjectSave(request *proto.ProjectRequest, stream proto.Ne
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Progress reporting is best effort: keep draining progressCh even if the
+	// client stopped reading, otherwise ProjectSave would block writing to it.
+	sendProgress := func(msg *proto.ProjectSaveMsg) {
+		if err := stream.Send(msg); err != nil {
+			logrus.Warnf("unable to send project save progress: %v", err)
+		}
+	}
+
 	go func() {
 		for {
 			select {
@@ -361,13 +393,13 @@ func (s *netemServer) ProjectSave(request *proto.ProjectRequest, stream proto.Ne
 			case p := <-progressCh:
 				switch p.Code {
 				case NODE_SAVE_COUNT:
-					stream.Send(&proto.ProjectSaveMsg{
+					sendProgress(&proto.ProjectSaveMsg{
 						Code:  proto.ProjectSaveMsg_NODE_COUNT,
 						Total: int32(p.Value),
 					})
 
 				case NODE_SAVE:
-					stream.Send(&proto.ProjectSaveMsg{
+					sendProgress(&proto.ProjectSaveMsg{
 						Code: proto.ProjectSaveMsg_NODE_SAVE,
 					})
 				}
@@ -380,10 +412,12 @@ func (s *netemServer) ProjectSave(request *proto.ProjectRequest, stream proto.Ne
 		return err
 	}
 
-	stream.Send(&proto.ProjectSaveMsg{
+	if err := stream.Send(&proto.ProjectSaveMsg{
 		Code: proto.ProjectSaveMsg_DATA,
 		Data: data.Bytes(),
-	})
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -699,6 +733,15 @@ func toppologyRunProgressGoroutine(
 	progressCh chan TopologyRunCloseProgressT,
 	stream proto.Netem_TopologyRunServer,
 ) {
+	// Progress reporting is best effort: keep draining progressCh even if the
+	// client stopped reading, otherwise the topology run would block writing
+	// to it.
+	sendProgress := func(msg *proto.TopologyRunMsg) {
+		if err := stream.Send(msg); err != nil {
+			logrus.Warnf("unable to send topology run progress: %v", err)
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -706,37 +749,37 @@ func toppologyRunProgressGoroutine(
 		case p := <-progressCh:
 			switch p.Code {
 			case NODE_COUNT:
-				stream.Send(&proto.TopologyRunMsg{
+				sendProgress(&proto.TopologyRunMsg{
 					Code:  proto.TopologyRunMsg_NODE_COUNT,
 					Total: int32(p.Value),
 				})
 			case BRIDGE_COUNT:
-				stream.Send(&proto.TopologyRunMsg{
+				sendProgress(&proto.TopologyRunMsg{
 					Code:  proto.TopologyRunMsg_BRIDGE_COUNT,
 					Total: int32(p.Value),
 				})
 			case LINK_COUNT:
-				stream.Send(&proto.TopologyRunMsg{
+				sendProgress(&proto.TopologyRunMsg{
 					Code:  proto.TopologyRunMsg_LINK_COUNT,
 					Total: int32(p.Value),
 				})
 			case SETUP_LINK:
-				stream.Send(&proto.TopologyRunMsg{
+				sendProgress(&proto.TopologyRunMsg{
 					Code:  proto.TopologyRunMsg_LINK_SETUP,
 					Total: int32(p.Value),
 				})
 			case START_NODE:
-				stream.Send(&proto.TopologyRunMsg{
+				sendProgress(&proto.TopologyRunMsg{
 					Code:  proto.TopologyRunMsg_NODE_START,
 					Total: int32(p.Value),
 				})
 			case START_BRIDGE:
-				stream.Send(&proto.TopologyRunMsg{
+				sendProgress(&proto.TopologyRunMsg{
 					Code:  proto.TopologyRunMsg_BRIDGE_START,
 					Total: int32(p.Value),
 				})
 			case LOADCONFIG_NODE:
-				stream.Send(&proto.TopologyRunMsg{
+				sendProgress(&proto.TopologyRunMsg{
 					Code:  proto.TopologyRunMsg_NODE_LOADCONFIG,
 					Total: int32(p.Value),
 				})
@@ -762,10 +805,12 @@ func (s *netemServer) TopologyRun(request *proto.ProjectRequest, stream proto.Ne
 		return err
 	}
 
-	stream.Send(&proto.TopologyRunMsg{
+	if err := stream.Send(&proto.TopologyRunMsg{
 		Code:         proto.TopologyRunMsg_NODE_MESSAGES,
 		NodeMessages: nodeMessages,
-	})
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -786,10 +831,12 @@ func (s *netemServer) TopologyReload(request *proto.ProjectRequest, stream proto
 		return err
 	}
 
-	stream.Send(&proto.TopologyRunMsg{
+	if err := stream.Send(&proto.TopologyRunMsg{
 		Code:         proto.TopologyRunMsg_NODE_MESSAGES,
 		NodeMessages: nodeMessages,
-	})
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -971,9 +1018,11 @@ func (s *netemServer) NodeCapture(request *proto.NodeInterfaceRequest, stream pr
 		})
 	}
 
-	stream.Send(&proto.CaptureSrvMsg{
+	if err := stream.Send(&proto.CaptureSrvMsg{
 		Code: proto.CaptureSrvMsg_OK,
-	})
+	}); err != nil {
+		return err
+	}
 
 	logger := logrus.WithFields(logrus.Fields{
 		"project": project.Id,
@@ -1014,10 +1063,13 @@ func (s *netemServer) NodeCapture(request *proto.NodeInterfaceRequest, stream pr
 
 	logger.Debugf("Start capture on interface %d", request.IfIndex)
 	if err := node.Capture(stream.Context(), int(request.GetIfIndex()), wOut); err != nil {
-		stream.Send(&proto.CaptureSrvMsg{
+		if sendErr := stream.Send(&proto.CaptureSrvMsg{
 			Code: proto.CaptureSrvMsg_ERROR,
 			Data: []byte(err.Error()),
-		})
+		}); sendErr != nil {
+			wOut.Close()
+			return sendErr
+		}
 	}
 
 	logger.Debugf("Stop capture on interface %d", request.IfIndex)
@@ -1171,19 +1223,24 @@ func (s *netemServer) NodeExec(stream proto.Netem_NodeExecServer) error {
 		ctx, msg.GetCmd(), rIn, wOut,
 		msg.GetTty(), uint(msg.GetTtyHeight()), uint(msg.GetTtyWidth()),
 		resizeCh)
+	var sendErr error
 	if err != nil {
-		stream.Send(&proto.ExecSrvMsg{
+		sendErr = stream.Send(&proto.ExecSrvMsg{
 			Code: proto.ExecSrvMsg_ERROR,
 			Data: []byte(err.Error()),
 		})
 	} else {
-		stream.Send(&proto.ExecSrvMsg{
+		sendErr = stream.Send(&proto.ExecSrvMsg{
 			Code: proto.ExecSrvMsg_CLOSE,
 		})
 	}
 
 	wOut.Close()
 	defer wIn.Close()
+
+	if sendErr != nil {
+		return fmt.Errorf("unable to send exec result: %w", sendErr)
+	}
 
 	logger.Debug("Close exec stream")
 	return g.Wait()

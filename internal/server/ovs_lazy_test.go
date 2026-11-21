@@ -10,6 +10,9 @@ import (
 )
 
 func TestTopologyRunCreatesOvsLazily(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires Docker images")
+	}
 	options.InitServerConfig()
 
 	dir := t.TempDir()

@@ -72,6 +72,9 @@ func TestOvsNode_InterfaceMapConcurrentAccess(t *testing.T) {
 }
 
 func TestOvsNode_StartStop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires Docker images")
+	}
 	options.InitServerConfig()
 	prjID := utils.RandString(3)
 	name := utils.RandString(4)
@@ -122,6 +125,9 @@ func TestOvsNode_StartStop(t *testing.T) {
 }
 
 func TestOvsNode_AttachLink(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires root and Docker networking")
+	}
 	options.InitServerConfig()
 	prjID := utils.RandString(3)
 

@@ -10,6 +10,9 @@ import (
 )
 
 func TestOVS_Instance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires Docker images")
+	}
 	options.InitServerConfig()
 	prjID := utils.RandString(4)
 

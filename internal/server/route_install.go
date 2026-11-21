@@ -169,7 +169,7 @@ func routeSpecsFromProto(batch *proto.RouteBatch) ([]link.RouteSpec, error) {
 			}
 		}
 
-		action := link.RouteReplace
+		var action link.RouteAction
 		switch route.GetAction() {
 		case proto.RouteAction_ROUTE_REPLACE:
 			action = link.RouteReplace

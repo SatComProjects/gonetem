@@ -263,7 +263,7 @@ func TestUpdater_Install(t *testing.T) {
 
 	logger := &testLogger{}
 	u := &Updater{Logger: logger, Arch: "amd64", InstallDir: installDir}
-	if err := u.install(context.Background(), workdir); err != nil {
+	if err := u.install(workdir); err != nil {
 		t.Fatalf("unable to install: %v", err)
 	}
 
@@ -281,7 +281,7 @@ func TestUpdater_Install(t *testing.T) {
 
 func TestUpdater_InstallMissingBinary(t *testing.T) {
 	u := &Updater{Arch: "amd64", InstallDir: t.TempDir()}
-	if err := u.install(context.Background(), t.TempDir()); err == nil {
+	if err := u.install(t.TempDir()); err == nil {
 		t.Error("install must fail when the binaries have not been built")
 	}
 }

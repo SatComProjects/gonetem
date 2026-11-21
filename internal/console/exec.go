@@ -77,12 +77,11 @@ func nodeExec(
 	prjId string,
 	node string,
 	cmd []string,
-) error {
+) (err error) {
 	var (
 		terminalFd uintptr
 		out        io.Writer = os.Stdout
 		oldState   *term.State
-		err        error
 	)
 
 	if file, ok := out.(*os.File); ok {
@@ -98,13 +97,19 @@ func nodeExec(
 	}
 
 	// Clean up after the command has exited
-	defer term.RestoreTerminal(terminalFd, oldState)
+	defer func() {
+		if restoreErr := term.RestoreTerminal(terminalFd, oldState); restoreErr != nil && err == nil {
+			err = fmt.Errorf("unable to restore terminal: %w", restoreErr)
+		}
+	}()
 
 	stream, err := client.NodeExec(context.Background())
 	if err != nil {
 		return err
 	}
-	defer stream.CloseSend()
+	// Closing the send side once the command is done is best effort: the
+	// server also closes the stream.
+	defer func() { _ = stream.CloseSend() }()
 
 	sender := &execSender{stream: stream}
 	tHeight, tWidth := termGetTtySize(terminalFd)
@@ -133,7 +138,7 @@ func nodeExec(
 			rFDSet.Zero()
 			rFDSet.Set(inFd)
 
-			if _, err := unix.Select(int(inFd)+1, rFDSet, nil, nil, &unix.Timeval{
+			if _, err := unix.Select(inFd+1, rFDSet, nil, nil, &unix.Timeval{
 				Sec:  0,
 				Usec: 100000, // 100ms
 			}); err != nil {
@@ -222,7 +227,9 @@ func nodeExec(
 	outputClosed.Store(true)
 
 	// wait input to finish
-	<-inputDone
+	if inputErr := <-inputDone; inputErr != nil && err == nil {
+		err = inputErr
+	}
 
 	return err
 }

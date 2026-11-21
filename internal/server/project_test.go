@@ -19,6 +19,9 @@ func createProject(filepath string, topo TopologyTestData) error {
 }
 
 func TestProject_OpenClose(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires Docker images")
+	}
 	options.InitServerConfig()
 
 	prjPath := "/tmp/prjtest-archive.gnet"
@@ -45,6 +48,9 @@ func TestProject_OpenClose(t *testing.T) {
 }
 
 func TestProject_Save(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires root and Docker networking")
+	}
 	options.InitServerConfig()
 
 	prjPath := "/tmp/prjtest-archive.gnet"

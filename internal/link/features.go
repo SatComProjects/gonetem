@@ -196,12 +196,13 @@ func readFeatureNames(ifName string, count int) ([]string, error) {
 // The ifreq layout depends on the architecture, so reuse the size of the
 // x/sys/unix Ifreq type instead of hard-coding it.
 func ethtoolIoctl(ifName string, data unsafe.Pointer) error {
-	ifr, err := unix.NewIfreq(ifName)
-	if err != nil {
+	// Validate the name the same way NewIfreq does: the kernel expects a
+	// NUL-terminated interface name that fits in IFNAMSIZ bytes.
+	if _, err := unix.NewIfreq(ifName); err != nil {
 		return err
 	}
 
-	buf := make([]byte, unsafe.Sizeof(*ifr))
+	buf := make([]byte, unsafe.Sizeof(unix.Ifreq{}))
 	copy(buf[:unix.IFNAMSIZ], ifName)
 	*(*unsafe.Pointer)(unsafe.Pointer(&buf[unix.IFNAMSIZ])) = data
 
