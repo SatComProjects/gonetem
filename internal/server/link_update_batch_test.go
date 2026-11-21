@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/proto"
 	"github.com/vishvananda/netns"
 )
 

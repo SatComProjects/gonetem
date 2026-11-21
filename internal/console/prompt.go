@@ -20,9 +20,9 @@ import (
 	"github.com/elk-language/go-prompt"
 	"github.com/fatih/color"
 	"github.com/google/shlex"
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/proto"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/utils"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
 )

@@ -6,7 +6,7 @@ import (
 
 	prompt "github.com/elk-language/go-prompt"
 	istrings "github.com/elk-language/go-prompt/strings"
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/proto"
 )
 
 type PromptCompleter struct {

@@ -13,9 +13,9 @@ import (
 	"sync"
 
 	"github.com/moby/term"
-	"github.com/mroy31/gonetem/internal/docker"
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/docker"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netns"
 )

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mroy31/gonetem/internal/docker"
-	"github.com/mroy31/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/docker"
+	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netns"
 )

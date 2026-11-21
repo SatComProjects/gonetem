@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mroy31/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/options"
 )
 
 const (

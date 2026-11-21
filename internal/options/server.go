@@ -13,7 +13,7 @@ import (
 
 // VERSION is a variable so release builds can override it with:
 //
-//	-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=..."
+//	-ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=..."
 var VERSION = "0.8.0"
 
 const (

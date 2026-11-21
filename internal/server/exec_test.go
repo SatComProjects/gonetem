@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/moby/term"
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/proto"
 	"google.golang.org/grpc/metadata"
 )
 

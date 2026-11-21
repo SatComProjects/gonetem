@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/mroy31/gonetem/internal/console"
-	"github.com/mroy31/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/console"
+	"github.com/satcomprojects/gonetem/internal/options"
 )
 
 func main() {

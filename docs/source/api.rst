@@ -36,7 +36,7 @@ Transport and connection
        downloads are single messages, so very large projects may need a raised
        limit on the client side.
    * - Proto package
-     - ``netem``; Go package ``github.com/mroy31/gonetem/internal/proto``.
+     - ``netem``; Go package ``github.com/satcomprojects/gonetem/internal/proto``.
 
 Generate stubs for your language with the standard toolchain; for Python:
 
