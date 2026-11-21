@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker/pkg/system"
 	"github.com/fatih/color"
 	"github.com/google/shlex"
+	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/satcomprojects/gonetem/internal/proto"
 	"github.com/vbauerster/mpb/v8"
 )
@@ -63,6 +64,7 @@ type NetemPrompt struct {
 	commands  CommandRegistry
 	nodes     []NetemNode // use by completion
 	tools     ToolRunner
+	config    options.NetemConsoleConfig
 	connect   func(server string) (*NetemConsoleClient, error)
 }
 
@@ -114,7 +116,7 @@ func (p *NetemPrompt) newClient() (*NetemConsoleClient, error) {
 	if p.connect != nil {
 		return p.connect(p.server)
 	}
-	return NewClient(p.server)
+	return NewClient(p.server, p.config.Tls)
 }
 
 func (p *NetemPrompt) refreshNodeList() {
@@ -221,7 +223,7 @@ func (p *NetemPrompt) Close() error {
 	return nil
 }
 
-func NewNetemPrompt(server, prjID, prjPath string) *NetemPrompt {
+func NewNetemPrompt(server, prjID, prjPath string, config options.NetemConsoleConfig) *NetemPrompt {
 	p := &NetemPrompt{
 		server:    server,
 		prjID:     prjID,
@@ -230,6 +232,7 @@ func NewNetemPrompt(server, prjID, prjPath string) *NetemPrompt {
 		commands:  NewCommandRegistry(),
 		nodes:     make([]NetemNode, 0),
 		tools:     execToolRunner{},
+		config:    config,
 	}
 	p.RegisterCommands()
 	p.refreshNodeList()

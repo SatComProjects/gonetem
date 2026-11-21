@@ -13,7 +13,6 @@ import (
 	"github.com/elk-language/go-prompt"
 	"github.com/fatih/color"
 	"github.com/google/shlex"
-	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/satcomprojects/gonetem/internal/proto"
 	"github.com/satcomprojects/gonetem/internal/utils"
 	"github.com/vbauerster/mpb/v8"
@@ -319,7 +318,7 @@ func (p *NetemPrompt) startConsole(client proto.NetemClient, nodeName string, sh
 	}{Name: nodeName, Cmd: "gonetem-console console " + shellOpt + node}
 
 	var buf bytes.Buffer
-	tmpl, err := template.New("terminal").Parse(options.ConsoleConfig.Terminal)
+	tmpl, err := template.New("terminal").Parse(p.config.Terminal)
 	if err != nil {
 		RedPrintf("Unable to parse terminal line in config file: %v", err)
 		return

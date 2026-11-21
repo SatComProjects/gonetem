@@ -41,7 +41,7 @@ func (t *NetemTopologyManager) Load() error {
 	t.nodes = make([]NetemNode, 0)
 	t.mu.Unlock()
 	g := new(errgroup.Group)
-	g.SetLimit(nodeCreateLimit())
+	g.SetLimit(t.createLimit())
 
 	for name, nConfig := range topology.Nodes {
 		name := name

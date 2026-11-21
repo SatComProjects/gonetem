@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/satcomprojects/gonetem/internal/docker"
@@ -20,15 +21,17 @@ type netemServer struct {
 	// projects is the per-server project registry. Handlers must use it; the
 	// zero value is not usable for project RPCs.
 	projects *ProjectRegistry
+	config   Config
+	factory  *NodeFactory
 	// updateMu serializes self-update operations.
 	updateMu sync.Mutex
 }
 
 func (s *netemServer) getDockerClient() (docker.ContainerAPI, error) {
-	if s.dockerClient != nil {
-		return s.dockerClient, nil
+	if s.dockerClient == nil {
+		return nil, fmt.Errorf("docker client is not configured")
 	}
-	return docker.NewDockerClient()
+	return s.dockerClient, nil
 }
 
 func (s *netemServer) Close() error {
@@ -46,13 +49,12 @@ func (s *netemServer) Close() error {
 	return nil
 }
 
-func NewServer() *netemServer {
-	client, err := docker.NewDockerClient()
-	if err != nil {
-		logrus.Errorf("unable to initialize Docker client: %v", err)
-	}
+func NewServer(client docker.ContainerAPI, config Config) *netemServer {
+	factory := NewNodeFactory(client, config.Docker)
 	return &netemServer{
 		dockerClient: client,
-		projects:     NewProjectRegistry(),
+		config:       config,
+		factory:      factory,
+		projects:     NewProjectRegistry(config, factory),
 	}
 }

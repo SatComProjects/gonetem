@@ -9,7 +9,6 @@ import (
 
 	"github.com/moby/term"
 	"github.com/satcomprojects/gonetem/internal/link"
-	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/satcomprojects/gonetem/internal/proto"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
@@ -449,7 +448,7 @@ func (s *netemServer) NodeCopyFrom(request *proto.CopyMsg, stream proto.Netem_No
 	}
 
 	// first copy the file into a private temp directory
-	tmpDir, err := os.MkdirTemp(options.ServerConfig.Workdir, "gonetem-copy-")
+	tmpDir, err := os.MkdirTemp(s.config.Workdir, "gonetem-copy-")
 	if err != nil {
 		return fmt.Errorf("unable to create temp directory: %w", err)
 	}
@@ -582,7 +581,7 @@ func (s *netemServer) NodeCopyTo(stream proto.Netem_NodeCopyToServer) error {
 
 			destPath = msg.GetNodePath()
 
-			tempDir, err = os.MkdirTemp(options.ServerConfig.Workdir, "gonetem-copy-")
+			tempDir, err = os.MkdirTemp(s.config.Workdir, "gonetem-copy-")
 			if err != nil {
 				tempDir = ""
 				return stream.SendAndClose(&proto.AckResponse{

@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/satcomprojects/gonetem/internal/docker"
 	"github.com/satcomprojects/gonetem/internal/options"
 	pb "github.com/satcomprojects/gonetem/internal/proto"
 	"github.com/satcomprojects/gonetem/internal/server"
@@ -62,7 +63,11 @@ func main() {
 	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(interrupt)
 
-	netemServer := server.NewServer()
+	dockerClient, err := docker.NewDockerClient()
+	if err != nil {
+		logrus.Fatalf("unable to initialize Docker client: %v", err)
+	}
+	netemServer := server.NewServer(dockerClient, server.ConfigFromOptions(options.ServerConfig))
 	go func() {
 		serverOptions := make([]grpc.ServerOption, 0)
 

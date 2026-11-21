@@ -46,7 +46,7 @@ func getServerUri() string {
 }
 
 func ListProjects() *proto.PrjListResponse {
-	client, err := NewClient(getServerUri())
+	client, err := NewClient(getServerUri(), options.ConsoleConfig.Tls)
 	if err != nil {
 		Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 	}
@@ -76,7 +76,7 @@ func OpenProject(prjPath string) (string, string, error) {
 		return "", "", err
 	}
 
-	client, err := NewClient(getServerUri())
+	client, err := NewClient(getServerUri(), options.ConsoleConfig.Tls)
 	if err != nil {
 		return "", "", fmt.Errorf("unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 	}
@@ -136,7 +136,7 @@ func OpenProject(prjPath string) (string, string, error) {
 }
 
 func NewPrompt(prjName, prjID, prjPath string) {
-	e := NewNetemPrompt(getServerUri(), prjID, prjPath)
+	e := NewNetemPrompt(getServerUri(), prjID, prjPath, options.ConsoleConfig)
 	c := NewPromptCompleter(e)
 
 	fmt.Println("")
@@ -180,7 +180,7 @@ var cleanCmd = &cobra.Command{
 			prompt.WithCompleter(ConfirmComplete),
 		)
 		if confirm == "yes" {
-			client, err := NewClient(getServerUri())
+			client, err := NewClient(getServerUri(), options.ConsoleConfig.Tls)
 			if err != nil {
 				Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 			}
@@ -348,7 +348,7 @@ var pullCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		var s *spinner.Spinner
 
-		client, err := NewClient(getServerUri())
+		client, err := NewClient(getServerUri(), options.ConsoleConfig.Tls)
 		if err != nil {
 			Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 		}
@@ -392,7 +392,7 @@ var updateCmd = &cobra.Command{
 and install it. The server must be restarted to use the new version.`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		client, err := NewClient(getServerUri())
+		client, err := NewClient(getServerUri(), options.ConsoleConfig.Tls)
 		if err != nil {
 			Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 		}

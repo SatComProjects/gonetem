@@ -80,7 +80,11 @@ func SaveConsoleConfig() error {
 }
 
 func LoadConsoleTLSCredentials() (credentials.TransportCredentials, error) {
-	certPool, consoleCerts, err := loadTLSCerts(ConsoleConfig.Tls)
+	return LoadConsoleTLSCredentialsFor(ConsoleConfig.Tls)
+}
+
+func LoadConsoleTLSCredentialsFor(tlsConfig TLSOptions) (credentials.TransportCredentials, error) {
+	certPool, consoleCerts, err := loadTLSCerts(tlsConfig)
 	if err != nil {
 		return nil, err
 	}

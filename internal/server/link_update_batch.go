@@ -224,7 +224,7 @@ func (t *NetemTopologyManager) applyLinkQoSGroups(entries []*linkBatchEntry) err
 	defer cache.closeAll()
 
 	groupErrs := new(errgroup.Group)
-	groupErrs.SetLimit(linkCreateLimit())
+	groupErrs.SetLimit(t.linkLimit())
 	for _, group := range groups {
 		group := group
 		groupErrs.Go(func() error {

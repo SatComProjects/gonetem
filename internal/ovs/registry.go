@@ -33,7 +33,7 @@ func (r *Registry) Get(prjID string) *OvsProjectInstance {
 // Create validates the image, creates the OVS container and registers the
 // instance for prjID. Creation is serialized so two callers cannot race for
 // the same project.
-func (r *Registry) Create(client docker.ContainerNodeAPI, prjID string) (*OvsProjectInstance, error) {
+func (r *Registry) Create(client docker.ContainerNodeAPI, cfg docker.RuntimeConfig, prjID string) (*OvsProjectInstance, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -45,7 +45,7 @@ func (r *Registry) Create(client docker.ContainerNodeAPI, prjID string) (*OvsPro
 		return nil, fmt.Errorf("docker client is required to create an OVS instance")
 	}
 
-	imgName := options.GetDockerImageId(options.ServerConfig.Docker.OvsImage)
+	imgName := options.GetDockerImageId(cfg.OvsImage)
 	present, err := client.IsImagePresent(context.Background(), imgName)
 	if err != nil {
 		return nil, err
@@ -106,8 +106,8 @@ func (r *Registry) Close(prjID string) error {
 var defaultRegistry = NewRegistry()
 
 // NewOvsInstance creates an OVS instance in the default registry.
-func NewOvsInstance(client docker.ContainerNodeAPI, prjID string) (*OvsProjectInstance, error) {
-	return defaultRegistry.Create(client, prjID)
+func NewOvsInstance(client docker.ContainerNodeAPI, cfg docker.RuntimeConfig, prjID string) (*OvsProjectInstance, error) {
+	return defaultRegistry.Create(client, cfg, prjID)
 }
 
 // GetOvsInstance returns the OVS instance registered for prjID, or nil.
