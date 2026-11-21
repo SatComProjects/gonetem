@@ -9,7 +9,7 @@ import (
 func TestProjectRegistryConcurrentAccess(t *testing.T) {
 	const readers = 50
 	const writers = 25
-	registry := NewProjectRegistry()
+	registry := newTestRegistry()
 
 	for i := 0; i < writers; i++ {
 		id := fmt.Sprintf("project-%d", i)

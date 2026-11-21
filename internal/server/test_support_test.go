@@ -4,14 +4,42 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/satcomprojects/gonetem/internal/docker"
 	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/satcomprojects/gonetem/internal/testutil"
 	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
+func testServerConfig() Config {
+	if options.ServerConfig.Docker.Nodes.Host.Image == "" {
+		options.InitServerConfig()
+	}
+	return ConfigFromOptions(options.ServerConfig)
+}
+
+func testNodeFactory() *NodeFactory {
+	client, err := docker.NewDockerClient()
+	if err != nil {
+		panic(err)
+	}
+	return NewNodeFactory(client, testServerConfig().Docker)
+}
+
+func newTestRegistry() *ProjectRegistry {
+	return NewProjectRegistry(testServerConfig(), testNodeFactory())
+}
+
 // newTestServer builds a handler with an empty per-test project registry.
 func newTestServer() *netemServer {
-	return &netemServer{projects: NewProjectRegistry()}
+	client, err := docker.NewDockerClient()
+	if err != nil {
+		panic(err)
+	}
+	return NewServer(client, testServerConfig())
+}
+
+func loadTestTopology(prjID, dir string) (*NetemTopologyManager, error) {
+	return LoadTopology(prjID, dir, testServerConfig(), testNodeFactory())
 }
 
 // testServerWithProject registers an already-built project and returns a

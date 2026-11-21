@@ -22,7 +22,7 @@ func TestRegistry_CreateRegistersInstance(t *testing.T) {
 	client := newFakeContainerAPI()
 	registry := NewRegistry()
 
-	instance, err := registry.Create(client, "prj1")
+	instance, err := registry.Create(client, testOvsConfig(), "prj1")
 	if err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
@@ -56,12 +56,12 @@ func TestRegistry_CreateRegistersInstance(t *testing.T) {
 
 func TestRegistry_CreateRejectsDuplicate(t *testing.T) {
 	registry := NewRegistry()
-	if _, err := registry.Create(newFakeContainerAPI(), "prj1"); err != nil {
+	if _, err := registry.Create(newFakeContainerAPI(), testOvsConfig(), "prj1"); err != nil {
 		t.Fatalf("first Create returned an error: %v", err)
 	}
 
 	duplicateClient := newFakeContainerAPI()
-	_, err := registry.Create(duplicateClient, "prj1")
+	_, err := registry.Create(duplicateClient, testOvsConfig(), "prj1")
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("duplicate Create error = %v, want already exists error", err)
 	}
@@ -73,7 +73,7 @@ func TestRegistry_CreateRejectsDuplicate(t *testing.T) {
 func TestRegistry_CreateRejectsNilClient(t *testing.T) {
 	registry := NewRegistry()
 
-	_, err := registry.Create(nil, "prj1")
+	_, err := registry.Create(nil, testOvsConfig(), "prj1")
 	if err == nil || !strings.Contains(err.Error(), "docker client is required") {
 		t.Fatalf("Create error = %v, want missing client error", err)
 	}
@@ -87,7 +87,7 @@ func TestRegistry_CreateRequiresImage(t *testing.T) {
 	client.imagePresent = false
 	registry := NewRegistry()
 
-	_, err := registry.Create(client, "prj1")
+	_, err := registry.Create(client, testOvsConfig(), "prj1")
 	if err == nil || !strings.Contains(err.Error(), "not present") {
 		t.Fatalf("Create error = %v, want missing image error", err)
 	}
@@ -105,14 +105,14 @@ func TestRegistry_CreatePropagatesClientErrors(t *testing.T) {
 	client.imageErr = imageErr
 	registry := NewRegistry()
 
-	if _, err := registry.Create(client, "prj1"); !errors.Is(err, imageErr) {
+	if _, err := registry.Create(client, testOvsConfig(), "prj1"); !errors.Is(err, imageErr) {
 		t.Fatalf("Create error = %v, want %v", err, imageErr)
 	}
 
 	createErr := errors.New("container create failed")
 	client = newFakeContainerAPI()
 	client.createErr = createErr
-	if _, err := registry.Create(client, "prj2"); !errors.Is(err, createErr) {
+	if _, err := registry.Create(client, testOvsConfig(), "prj2"); !errors.Is(err, createErr) {
 		t.Fatalf("Create error = %v, want %v", err, createErr)
 	}
 	if instance := registry.Get("prj2"); instance != nil {
@@ -132,7 +132,7 @@ func TestRegistry_CloseMissingReturnsError(t *testing.T) {
 func TestRegistry_CloseRemovesEntryAndContainer(t *testing.T) {
 	client := newFakeContainerAPI()
 	registry := NewRegistry()
-	if _, err := registry.Create(client, "prj1"); err != nil {
+	if _, err := registry.Create(client, testOvsConfig(), "prj1"); err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
 
@@ -155,7 +155,7 @@ func TestRegistry_CloseForgetsEntryWhenRemoveFails(t *testing.T) {
 	client := newFakeContainerAPI()
 	client.rmErr = rmErr
 	registry := NewRegistry()
-	if _, err := registry.Create(client, "prj1"); err != nil {
+	if _, err := registry.Create(client, testOvsConfig(), "prj1"); err != nil {
 		t.Fatalf("Create returned an error: %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestRegistry_CloseForgetsEntryWhenRemoveFails(t *testing.T) {
 
 func TestRegistry_CreateAfterCloseSucceeds(t *testing.T) {
 	registry := NewRegistry()
-	first, err := registry.Create(newFakeContainerAPI(), "prj1")
+	first, err := registry.Create(newFakeContainerAPI(), testOvsConfig(), "prj1")
 	if err != nil {
 		t.Fatalf("first Create returned an error: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestRegistry_CreateAfterCloseSucceeds(t *testing.T) {
 		t.Fatalf("Close returned an error: %v", err)
 	}
 
-	second, err := registry.Create(newFakeContainerAPI(), "prj1")
+	second, err := registry.Create(newFakeContainerAPI(), testOvsConfig(), "prj1")
 	if err != nil {
 		t.Fatalf("Create after Close returned an error: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestRegistry_ConcurrentCreateSameProjectOnlyOneSucceeds(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := registry.Create(newFakeContainerAPI(), "prj1")
+			_, err := registry.Create(newFakeContainerAPI(), testOvsConfig(), "prj1")
 			results <- err
 		}()
 	}
@@ -235,7 +235,7 @@ func TestRegistry_ConcurrentIndependentProjects(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			prjID := fmt.Sprintf("prj%d", i)
-			if _, err := registry.Create(newFakeContainerAPI(), prjID); err != nil {
+			if _, err := registry.Create(newFakeContainerAPI(), testOvsConfig(), prjID); err != nil {
 				t.Errorf("Create(%s) returned an error: %v", prjID, err)
 				return
 			}
@@ -252,7 +252,7 @@ func TestPackageLevelRegistryWrappers(t *testing.T) {
 	t.Cleanup(func() { _ = CloseOvsInstance(prjID) })
 
 	client := newFakeContainerAPI()
-	instance, err := NewOvsInstance(client, prjID)
+	instance, err := NewOvsInstance(client, testOvsConfig(), prjID)
 	if err != nil {
 		t.Fatalf("NewOvsInstance returned an error: %v", err)
 	}

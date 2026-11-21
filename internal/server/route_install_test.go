@@ -237,22 +237,16 @@ func TestRouteInstallEmptyRequest(t *testing.T) {
 }
 
 func TestRouteInstallLimit(t *testing.T) {
-	previous := options.ServerConfig.Docker.RouteConcurrency
-	defer func() { options.ServerConfig.Docker.RouteConcurrency = previous }()
-
-	options.ServerConfig.Docker.RouteConcurrency = 8
-	if got := routeInstallLimit(0); got != 8 {
+	if got := routeInstallLimit(8, 0); got != 8 {
 		t.Fatalf("server default = %d, want 8", got)
 	}
-	if got := routeInstallLimit(4); got != 4 {
+	if got := routeInstallLimit(8, 4); got != 4 {
 		t.Fatalf("requested lower limit = %d, want 4", got)
 	}
-	if got := routeInstallLimit(16); got != 8 {
+	if got := routeInstallLimit(8, 16); got != 8 {
 		t.Fatalf("requested higher limit = %d, want 8", got)
 	}
-
-	options.ServerConfig.Docker.RouteConcurrency = 0
-	if got := routeInstallLimit(0); got != defaultRouteConcurrency {
+	if got := routeInstallLimit(0, 0); got != defaultRouteConcurrency {
 		t.Fatalf("fallback default = %d, want %d", got, defaultRouteConcurrency)
 	}
 }

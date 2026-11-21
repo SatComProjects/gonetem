@@ -18,7 +18,7 @@ func TestTopologyLoadNamespaceNodesAndLinks(t *testing.T) {
 		t.Fatalf("unable to write topology: %v", err)
 	}
 
-	manager, err := LoadTopology("CHR", dir)
+	manager, err := loadTestTopology("CHR", dir)
 	if err != nil {
 		t.Fatalf("LoadTopology returned an error: %v", err)
 	}

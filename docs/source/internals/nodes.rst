@@ -103,13 +103,12 @@ declared by the consumer package, so the adapters do not import
 
 .. code-block:: go
 
-   docker.<type>  -> docker.NewDockerNode(client, prjID, <type>, options)
-   ovs            -> ovs.NewOvsNode(prjID, name, shortName)
+   docker.<type>  -> docker.NewDockerNode(client, dockerConfig, prjID, <type>, options)
+   ovs            -> ovs.NewOvsNode(prjID, name, shortName, dockerConfig.Workdir)
    namespace      -> namespace.NewNamespaceNode(prjID, name, shortName)
 
 Any other type is rejected. A Docker type that is not defined in the server
-configuration is rejected by ``NewDockerNode``. The factory owns the Docker
-client and injects it into Docker/Ovs adapters; those adapters no longer call
+configuration is rejected by ``NewDockerNode``. The factory owns the Docker client and Docker/OVS runtime config and injects them into the adapters; those adapters no longer call
 ``docker.NewDockerClient`` themselves. ``LoadTopology`` constructs the
 production factory once per project and stores its methods on the topology
 manager (``nodeFactory``, ``ovsFactory``). Tests inject fake factories or nodes
@@ -128,7 +127,7 @@ and neither constructs a Docker client.
 Creation
 ~~~~~~~~
 
-``NewDockerNode(client, ...)``:
+``NewDockerNode(client, runtimeConfig, ...)``:
 
 #. stores the injected ``docker.ContainerNodeAPI``;
 #. resolves the node type definition from ``docker.nodes`` or
@@ -314,7 +313,7 @@ composition root injects a registry in a later phase.
 Instance
 ~~~~~~~~
 
-``NewOvsInstance(client, prjID)``:
+``NewOvsInstance(client, runtimeConfig, prjID)``:
 
 #. refuses to create a second instance for the same project (``Registry`` lock
    and map);

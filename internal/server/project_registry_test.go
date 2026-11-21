@@ -14,7 +14,7 @@ func TestProjectRegistryLifecycle(t *testing.T) {
 	options.ServerConfig.Workdir = t.TempDir()
 	t.Cleanup(func() { options.ServerConfig.Workdir = oldWorkdir })
 
-	registry := NewProjectRegistry()
+	registry := newTestRegistry()
 	archive := createProjectArchive(t, namespaceNetwork)
 
 	project, err := registry.Open("p1", "ProjectOne", archive)
@@ -74,7 +74,7 @@ func TestProjectRegistryLifecycle(t *testing.T) {
 }
 
 func TestProjectRegistryAddRemove(t *testing.T) {
-	registry := NewProjectRegistry()
+	registry := newTestRegistry()
 	project := &NetemProject{Id: "p1", Name: "one"}
 	if err := registry.Add(project); err != nil {
 		t.Fatalf("Add returned an error: %v", err)

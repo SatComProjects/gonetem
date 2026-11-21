@@ -46,10 +46,7 @@ func TestNodeContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.guard(t)
 
-			factory, err := NewNodeFactory()
-			if err != nil {
-				t.Fatalf("NewNodeFactory returned an error: %v", err)
-			}
+			factory := testNodeFactory()
 			if tc.config.Type == "ovs" {
 				instance, err := factory.CreateOvsInstance("CTR")
 				if err != nil {

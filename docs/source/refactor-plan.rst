@@ -633,6 +633,13 @@ the console can be tested without a terminal, gRPC server or external tools.
 Phase 8 - Configuration and composition root
 --------------------------------------------
 
+**Status: complete (2026-11-21).** Delivered `server.Config` /
+`docker.RuntimeConfig`, injected into the server, project registry, topology
+manager, node factory, Docker/OVS adapters, update service and prompt/client.
+The server binary now creates the Docker client and builds the config; all
+`options.ServerConfig` reads are confined to `cmd/` and `internal/options`.
+Added a two-server isolation test with different workdirs/concurrency.
+
 **Goal.** Configuration is parsed once and injected; the composition root is
 the only place that knows concrete implementations.
 
@@ -718,8 +725,8 @@ Metrics and ratchets
      - Keep it hermetic as packages split
    * - Unit coverage (non-generated)
      - 26.5 % after Phase 0
-     - Phase 7 ratchet: 45 % total, 63.5 % server, 9 % console, 34 % Docker,
-       52 % namespace, 12 % link, 83 % OVS (measured 45.9/64.3/9.3/34.7/53.2/12.4/84.1)
+     - Phase 8 ratchet: 45.5 % total, 64 % server, 9 % console, 34 % Docker,
+       52 % namespace, 12 % link, 83 % OVS (measured 46.1/64.9/9.3/35.3/53.2/12.4/84.1)
      - At least 60 % total; 80 to 90 % for critical pure logic
    * - Race detector
      - Passes on packages that run
@@ -857,8 +864,8 @@ Phase status
      - Complete (2026-11-21)
      - Command registry, tool runner, injected client, prompt file split.
    * - 8
-     - Planned
-     - Configuration injection and composition root.
+     - Complete (2026-11-21)
+     - Config value objects, constructor injection, binary composition, isolation test.
    * - 9
      - Planned
      - Strict gates and release.
