@@ -74,7 +74,9 @@ func getConfigCmd() *cobra.Command {
 				Fatal("Unknown config key '%s'", args[0])
 			}
 
-			options.SaveConsoleConfig()
+			if err := options.SaveConsoleConfig(); err != nil {
+				Fatal("Unable to save configuration: %v", err)
+			}
 		},
 	})
 

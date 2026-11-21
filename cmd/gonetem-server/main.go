@@ -64,7 +64,7 @@ func main() {
 
 	netemServer := server.NewServer()
 	go func() {
-		var serverOptions []grpc.ServerOption = make([]grpc.ServerOption, 0)
+		serverOptions := make([]grpc.ServerOption, 0)
 
 		logrus.Infof("TLS enabled: %t", options.ServerConfig.Tls.Enabled)
 		if options.ServerConfig.Tls.Enabled {

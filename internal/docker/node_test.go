@@ -160,6 +160,9 @@ func TestVRRPInterfaceNameIncludesGroup(t *testing.T) {
 }
 
 func TestDockerNode_LazyCreation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires Docker images")
+	}
 	options.InitServerConfig()
 	node, err := NewDockerNode(utils.RandString(4), "host", DockerNodeOptions{
 		Name:       utils.RandString(6),
@@ -188,6 +191,9 @@ func TestDockerNode_LazyCreation(t *testing.T) {
 }
 
 func TestDockerNode_StartStopWithoutInterfaces(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires Docker images")
+	}
 	options.InitServerConfig()
 	prjID := utils.RandString(4)
 	node, err := NewDockerNode(prjID, "host", DockerNodeOptions{

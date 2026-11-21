@@ -109,6 +109,9 @@ func checkTopology(data TopologyTestData, topology *NetemTopologyManager, t *tes
 }
 
 func TestTopology_UpdateLink(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires root and Docker networking")
+	}
 	options.InitServerConfig()
 	tests := []struct {
 		desc          string
@@ -198,6 +201,9 @@ func TestTopology_UpdateLink(t *testing.T) {
 }
 
 func TestTopology_Load(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires Docker images")
+	}
 	options.InitServerConfig()
 	tests := []struct {
 		desc          string
@@ -255,6 +261,9 @@ func TestTopology_Load(t *testing.T) {
 }
 
 func TestTopology_Save(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires root and Docker networking")
+	}
 	prjID := utils.RandString(4)
 	// create temp dir to save configuration files
 	dir, err := os.MkdirTemp("/tmp", "ntmtst")

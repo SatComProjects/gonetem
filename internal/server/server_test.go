@@ -16,6 +16,7 @@ import (
 	"github.com/mroy31/gonetem/internal/utils"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -86,7 +87,11 @@ func TestServer_Version(t *testing.T) {
 	options.InitServerConfig()
 	ctx := context.Background()
 
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer()),
+	)
 	if err != nil {
 		stdlog.Fatal(err)
 	}
@@ -113,7 +118,11 @@ func TestServer_UpdateDisabled(t *testing.T) {
 	options.InitServerConfig()
 	ctx := context.Background()
 
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer()),
+	)
 	if err != nil {
 		stdlog.Fatal(err)
 	}
@@ -135,10 +144,17 @@ func TestServer_UpdateDisabled(t *testing.T) {
 }
 
 func TestServer_Project(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires Docker images")
+	}
 	options.InitServerConfig()
 	ctx := context.Background()
 
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer()),
+	)
 	if err != nil {
 		stdlog.Fatal(err)
 	}
@@ -205,10 +221,17 @@ func TestServer_Project(t *testing.T) {
 }
 
 func TestServer_Save(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires Docker images")
+	}
 	options.InitServerConfig()
 	ctx := context.Background()
 
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer()),
+	)
 	if err != nil {
 		stdlog.Fatal(err)
 	}
@@ -331,10 +354,17 @@ nodes:
 }
 
 func TestServer_NodeAddDel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: requires Docker images")
+	}
 	options.InitServerConfig()
 	ctx := context.Background()
 
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer()),
+	)
 	if err != nil {
 		stdlog.Fatal(err)
 	}

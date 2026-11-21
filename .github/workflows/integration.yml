@@ -1,0 +1,81 @@
+name: Integration
+
+# Privileged, environment-dependent suite. It is intentionally not a required
+# pull-request check yet: it needs root, Docker and MPLS-capable networking.
+# Promote it to a required check once it has a stable pass rate on the runner.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  integration:
+    name: Kernel and gRPC integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+
+      - name: Load MPLS kernel modules
+        run: sudo modprobe mpls_router mpls_iptunnel || true
+
+      - name: Pull node images
+        run: |
+          for image in \
+            mroy31/gonetem-frr:0.6.0 \
+            mroy31/gonetem-host:0.6.0 \
+            mroy31/gonetem-server:0.6.0 \
+            mroy31/gonetem-ovs:0.6.0 \
+            mroy31/gonetem-bmv2:0.6.0; do
+            docker pull "$image"
+          done
+
+      - name: Run privileged Go suite
+        run: sudo env "PATH=$PATH" go test -count=1 -timeout=30m ./...
+
+      - name: Build binaries
+        run: make build-amd64
+
+      - name: Start gonetem-server
+        run: |
+          sudo env "PATH=$PATH" ./bin/gonetem-server_amd64 -verbose \
+            > /tmp/gonetem-server.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if (echo > /dev/tcp/127.0.0.1/10110) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server did not start"
+          sudo cat /tmp/gonetem-server.log
+          exit 1
+
+      - name: Install Python test dependencies
+        run: python -m pip install -r tests/requirements.txt
+
+      - name: Run gRPC integration tests
+        run: python -m pytest -s tests/test_grpc_link_qos.py -v
+
+      - name: Show server log on failure
+        if: failure()
+        run: sudo cat /tmp/gonetem-server.log
+
+      - name: Stop gonetem-server
+        if: always()
+        run: sudo pkill -f gonetem-server_amd64 || true

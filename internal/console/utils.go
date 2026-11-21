@@ -20,7 +20,7 @@ func CmdErrLogger(pipe io.ReadCloser) {
 			return
 		}
 
-		fmt.Print(color.YellowString(string(output)))
+		fmt.Print(color.YellowString(output))
 	}
 }
 

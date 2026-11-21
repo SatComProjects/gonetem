@@ -305,20 +305,20 @@ func MoveInterfacesNetns(ifNames map[string]IfState, current netns.NsHandle, tar
 	})
 }
 
-func IpAddressAdd(ifName string, namespace netns.NsHandle, IPAddress string) error {
+func IpAddressAdd(ifName string, namespace netns.NsHandle, ipAddress string) error {
 	return withNetlinkHandle(namespace, func(handle *netlink.Handle) error {
 		l, err := handle.LinkByName(ifName)
 		if err != nil {
 			return fmt.Errorf("unable get link %s: %v", ifName, err)
 		}
 
-		addr, err := netlink.ParseAddr(IPAddress)
+		addr, err := netlink.ParseAddr(ipAddress)
 		if err != nil {
-			return fmt.Errorf("unable to parse IP address %s: %v", IPAddress, err)
+			return fmt.Errorf("unable to parse IP address %s: %v", ipAddress, err)
 		}
 
 		if err := handle.AddrAdd(l, addr); err != nil {
-			return fmt.Errorf("unable to add IP address %s to link %s: %v", IPAddress, ifName, err)
+			return fmt.Errorf("unable to add IP address %s to link %s: %v", ipAddress, ifName, err)
 		}
 		return nil
 	})

@@ -1,0 +1,103 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+# Phase 0 gate: correctness, naming and dependency-direction checks that the
+# current tree can pass. The stricter sets (revive, gosec, dupl) are introduced
+# in refactor phase 9, once the baseline is clean; see
+# docs/source/refactor-plan.rst.
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - unparam
+    - gocritic
+    - gocyclo
+    - depguard
+  settings:
+    gocyclo:
+      min-complexity: 30
+    depguard:
+      rules:
+        # Dependency direction, enforced rather than documented only:
+        #   cmd -> server -> adapters (docker, namespace, ovs, update)
+        #                   -> foundation (link, options, utils)
+        #   console -> foundation
+        #   proto is the transport boundary; it may not leak into lower layers.
+        foundation:
+          files:
+            - "**/internal/link/**"
+            - "**/internal/utils/**"
+            - "**/internal/options/**"
+          list-mode: lax
+          deny:
+            - pkg: github.com/mroy31/gonetem/internal/server
+              desc: "foundation packages must not depend on the server layer"
+            - pkg: github.com/mroy31/gonetem/internal/console
+              desc: "foundation packages must not depend on the console"
+            - pkg: github.com/mroy31/gonetem/internal/docker
+              desc: "foundation packages must not depend on adapters"
+            - pkg: github.com/mroy31/gonetem/internal/namespace
+              desc: "foundation packages must not depend on adapters"
+            - pkg: github.com/mroy31/gonetem/internal/ovs
+              desc: "foundation packages must not depend on adapters"
+            - pkg: github.com/mroy31/gonetem/internal/update
+              desc: "foundation packages must not depend on adapters"
+            - pkg: github.com/mroy31/gonetem/internal/proto
+              desc: "protobuf types must stay at the transport boundary"
+        adapters:
+          files:
+            - "**/internal/docker/**"
+            - "**/internal/namespace/**"
+            - "**/internal/ovs/**"
+            - "**/internal/update/**"
+          list-mode: lax
+          deny:
+            - pkg: github.com/mroy31/gonetem/internal/server
+              desc: "adapters must not depend on the server layer"
+            - pkg: github.com/mroy31/gonetem/internal/console
+              desc: "adapters must not depend on the console"
+            - pkg: github.com/mroy31/gonetem/internal/proto
+              desc: "protobuf types must stay at the transport boundary"
+        server:
+          files:
+            - "**/internal/server/**"
+          list-mode: lax
+          deny:
+            - pkg: github.com/mroy31/gonetem/internal/console
+              desc: "the server must not depend on the console"
+        console:
+          files:
+            - "**/internal/console/**"
+          list-mode: lax
+          deny:
+            - pkg: github.com/mroy31/gonetem/internal/server
+              desc: "the console must not depend on server internals"
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+    paths:
+      - internal/proto
+    rules:
+      # Test helpers are allowed to keep the current errcheck/style baseline;
+      # assertions are never excluded.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gocritic
+          - gocyclo
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

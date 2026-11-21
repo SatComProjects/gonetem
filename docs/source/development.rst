@@ -7,6 +7,11 @@ This guide is for contributors working on GoNetEm itself. It covers the
 environment, the repository layout, the development loop, coding conventions and
 the release process.
 
+GoNetEm uses **specification-first development** and **Red-Green-Refactor**.
+AI agents must also follow ``AGENTS.md`` at the repository root. The phase plan
+for the current SOLID/TDD refactor, including exit criteria and measurable
+ratchets, is :ref:`refactor-plan`.
+
 Environment
 -----------
 
@@ -28,6 +33,7 @@ Required:
    git clone https://github.com/satcomprojects/gonetem.git
    cd gonetem
    go mod download
+   make check
    make build-amd64
 
 The binaries land in ``bin/``:
@@ -107,6 +113,70 @@ Fast iteration patterns:
 * keep ``workdir`` on a real filesystem, not ``tmpfs``, when testing large
   projects.
 
+Development principles
+----------------------
+
+Every change, including a refactor, follows six stages:
+
+#. **Understand** - write the problem, acceptance criteria, edge cases,
+   constraints and non-goals; inspect the code before proposing a solution.
+#. **Design** - assign responsibilities, choose consumer-owned interfaces and
+   dependency direction, and list the tests before editing.
+#. **Test (RED)** - write the smallest failing test first and confirm that it
+   fails for the expected reason.
+#. **Implement (GREEN)** - make the smallest change that passes; do not edit
+   tests to fit the code.
+#. **Refactor** - apply SOLID pragmatically, remove duplication and keep
+   behaviour identical.
+#. **Validate** - run the fast and relevant privileged checks, review the
+   complete diff, and report trade-offs and unverified assumptions.
+
+Rules:
+
+* Never weaken, delete or skip a test to make a suite green. If a test encodes
+  the wrong behaviour, fix it deliberately and explain why in the pull request.
+* Never claim a test passed without running it. Report the command, exit status
+  and relevant output.
+* Keep changes small and scoped. Do not mix a feature with an unrelated
+  refactor.
+* Define interfaces where they are consumed. Do not grow the ``INetemNode``
+  surface.
+* Keep configuration and collaborators explicit. New package-level mutable
+  state is not accepted.
+* The architecture rules in ``.golangci.yml`` (``depguard``) are enforced in CI;
+  see :ref:`architecture` for the package map.
+
+Quality gates
+-------------
+
+The fast, hermetic gate is:
+
+.. code-block:: bash
+
+   make check       # gofmt, go vet, golangci-lint, unit, race, build
+
+The privileged gate is separate because it needs root, Docker and kernel
+support:
+
+.. code-block:: bash
+
+   make test-integration
+   python -m pytest -s tests/test_grpc_link_qos.py -v   # against a running server
+
+``make test-unit`` runs ``go test -short ./...``; a test that needs root,
+Docker, kernel modules, network access or a running server must guard itself
+and run only in the privileged workflow. The unit suite must pass on a clean
+machine.
+
+Required pull-request checks are lint, unit tests, build and documentation.
+The vulnerability scan runs on every pull request but is advisory during the
+Phase 0 baseline (the current toolchain and dependencies have reachable
+advisories); it becomes blocking in the hardening phase. The privileged
+integration workflow runs nightly and can be triggered manually; it is promoted
+to a required check once its pass rate is stable. Branch protection on ``develop`` and ``master`` requires these checks,
+forbids force pushes and deletions, and requires a pull request. See
+:ref:`refactor-plan` for the coverage and lint ratchets.
+
 Debugging with VS Code / Delve
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -153,7 +223,14 @@ PID whose ``/proc/<pid>/ns/net`` is the node namespace.
 Code conventions
 ----------------
 
-* ``gofmt`` all Go code; ``go vet ./...`` must pass.
+* Write the failing test first; a behaviour change without a test is incomplete.
+* Apply SOLID pragmatically: one reason to change per type, consumer-owned
+  interfaces, dependencies pointing inward, explicit composition in ``cmd/``.
+* Do not add package-level mutable state. Inject configuration and collaborators.
+* Keep protobuf types at the gRPC boundary; convert to domain types before
+  calling the topology or node layers.
+* ``gofmt`` all Go code; ``go vet ./...`` and ``golangci-lint run ./...`` must
+  pass.
 * Wrap errors with context and ``%w``:
   ``fmt.Errorf("unable to create node %s: %w", name, err)``. Batch operations
   aggregate with ``errors.Join``.
@@ -253,9 +330,13 @@ Release process
 
    .. code-block:: bash
 
+      make check
       make build-amd64 build-arm64 build-armv7
-      sudo go test ./...
+      make test-integration
       python -m pytest -s tests/test_grpc_link_qos.py -v   # against a server
+
+#. Confirm every required CI check is green on ``develop`` and that the
+   coverage/lint ratchets in :ref:`refactor-plan` did not regress.
 
 #. Build Debian packages (``make build-deb-amd64`` etc.) if relevant.
 #. If node behaviour changed, bump ``IMAGE_VERSION`` in

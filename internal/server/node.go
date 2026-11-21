@@ -90,7 +90,7 @@ type INetemNode interface {
 	Stop() error
 	GetNetns() (netns.NsHandle, error)
 	GetInterfaceName(ifIndex int) string
-	AttachMgntInterface(ifName string, ns netns.NsHandle, IPAddress string) error
+	AttachMgntInterface(ifName string, ns netns.NsHandle, ipAddress string) error
 	AttachInterface(ifName string, ifIndex int, configure bool) error
 	DetachInterface(ifName string) error
 	ConfigureInterfaces() error

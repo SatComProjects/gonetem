@@ -12,3 +12,8 @@ TODO.md
 __pycache__/
 .pytest_cache/
 .venv/
+
+# Quality-gate artifacts
+coverage.out
+*.cover
+coverage.html

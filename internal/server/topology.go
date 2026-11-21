@@ -226,7 +226,9 @@ type NodeConfig struct {
 }
 
 func (n *NodeConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	defaults.Set(n)
+	if err := defaults.Set(n); err != nil {
+		return err
+	}
 
 	type plain NodeConfig
 	if err := unmarshal((*plain)(n)); err != nil {
@@ -1804,7 +1806,11 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 			netnsCache.closeAll()
 			if err != nil {
 				if config.Launch {
-					node.Stop()
+					if stopErr := node.Stop(); stopErr != nil {
+						// Rollback is best effort; report it without hiding
+						// the management-link error.
+						logrus.Warnf("unable to stop node %s during rollback: %v", name, stopErr)
+					}
 				}
 				node.Close()
 				t.nodes = t.nodes[:len(t.nodes)-1]
@@ -1821,6 +1827,98 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 		return t.SynchroniseTopology()
 	}
 	return nil
+}
+
+// deleteNodeLinks removes the kernel links and bridge peers attached to the
+// node being deleted, then detaches the peer interfaces.
+func deleteNodeLinks(
+	name string,
+	pending []*NetemLink,
+	bridgePeerNames []string,
+	running bool,
+	netnsCache *nodeNetnsCache,
+) error {
+	if running {
+		type deleteBatch struct {
+			node  INetemNode
+			names []string
+		}
+		batches := make(map[string]*deleteBatch)
+		for _, l := range pending {
+			node := l.Peer1.Node
+			key := node.GetName()
+			batch, ok := batches[key]
+			if !ok {
+				batch = &deleteBatch{node: node}
+				batches[key] = batch
+			}
+			batch.names = append(batch.names, node.GetInterfaceName(l.Peer1.IfIndex))
+		}
+
+		for _, batch := range batches {
+			ns, err := netnsCache.get(batch.node)
+			if err != nil {
+				return err
+			}
+			if err := link.DeleteLinks(batch.names, ns); err != nil {
+				return fmt.Errorf("unable to delete links for node %s: %w", name, err)
+			}
+		}
+
+		if len(bridgePeerNames) > 0 {
+			rootNs := link.GetRootNetns()
+			err := link.DeleteLinks(bridgePeerNames, rootNs)
+			rootNs.Close()
+			if err != nil {
+				return fmt.Errorf("unable to delete bridge links for node %s: %w", name, err)
+			}
+		}
+	}
+
+	for _, l := range pending {
+		peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
+		peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
+		if err := l.Peer1.Node.DetachInterface(peer1IfName); err != nil {
+			return fmt.Errorf("unable to detach interface %s from node %s: %w", peer1IfName, l.Peer1.Node.GetName(), err)
+		}
+		if err := l.Peer2.Node.DetachInterface(peer2IfName); err != nil {
+			return fmt.Errorf("unable to detach interface %s from node %s: %w", peer2IfName, l.Peer2.Node.GetName(), err)
+		}
+	}
+
+	return nil
+}
+
+// removeNodeLinksLocked drops the links and bridge peers/interfaces that refer
+// to the deleted node. The caller must hold the topology write lock.
+func (t *NetemTopologyManager) removeNodeLinksLocked(name string) {
+	keptLinks := t.links[:0]
+	for _, l := range t.links {
+		if l.Peer1.Node.GetName() != name && l.Peer2.Node.GetName() != name {
+			keptLinks = append(keptLinks, l)
+		}
+	}
+	t.links = keptLinks
+	t.linkIndex = nil
+	t.ensureLinkIndexLocked()
+
+	for _, br := range t.bridges {
+		keptPeers := br.Peers[:0]
+		for _, peer := range br.Peers {
+			if peer.Node.GetName() != name {
+				keptPeers = append(keptPeers, peer)
+			}
+		}
+		br.Peers = keptPeers
+
+		keptInterfaces := br.Config.Interfaces[:0]
+		for _, ifName := range br.Config.Interfaces {
+			if strings.Split(ifName, ".")[0] != name {
+				keptInterfaces = append(keptInterfaces, ifName)
+			}
+		}
+		br.Config.Interfaces = keptInterfaces
+	}
 }
 
 func (t *NetemTopologyManager) NodeDel(name string, sync bool) error {
@@ -1881,52 +1979,8 @@ func (t *NetemTopologyManager) NodeDel(name string, sync bool) error {
 	netnsCache := newNodeNetnsCache()
 	defer netnsCache.closeAll()
 
-	if running {
-		type deleteBatch struct {
-			node  INetemNode
-			names []string
-		}
-		batches := make(map[string]*deleteBatch)
-		for _, l := range pending {
-			node := l.Peer1.Node
-			key := node.GetName()
-			batch, ok := batches[key]
-			if !ok {
-				batch = &deleteBatch{node: node}
-				batches[key] = batch
-			}
-			batch.names = append(batch.names, node.GetInterfaceName(l.Peer1.IfIndex))
-		}
-
-		for _, batch := range batches {
-			ns, err := netnsCache.get(batch.node)
-			if err != nil {
-				return err
-			}
-			if err := link.DeleteLinks(batch.names, ns); err != nil {
-				return fmt.Errorf("unable to delete links for node %s: %w", name, err)
-			}
-		}
-
-		if len(bridgePeerNames) > 0 {
-			rootNs := link.GetRootNetns()
-			err := link.DeleteLinks(bridgePeerNames, rootNs)
-			rootNs.Close()
-			if err != nil {
-				return fmt.Errorf("unable to delete bridge links for node %s: %w", name, err)
-			}
-		}
-	}
-
-	for _, l := range pending {
-		peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
-		peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
-		if err := l.Peer1.Node.DetachInterface(peer1IfName); err != nil {
-			return fmt.Errorf("unable to detach interface %s from node %s: %w", peer1IfName, l.Peer1.Node.GetName(), err)
-		}
-		if err := l.Peer2.Node.DetachInterface(peer2IfName); err != nil {
-			return fmt.Errorf("unable to detach interface %s from node %s: %w", peer2IfName, l.Peer2.Node.GetName(), err)
-		}
+	if err := deleteNodeLinks(name, pending, bridgePeerNames, running, netnsCache); err != nil {
+		return err
 	}
 
 	netnsCache.closeAll()
@@ -1934,33 +1988,7 @@ func (t *NetemTopologyManager) NodeDel(name string, sync bool) error {
 	// Commit link/bridge removals before closing the node. This preserves the
 	// previous partial-failure behavior if the container cannot be removed.
 	t.mu.Lock()
-	keptLinks := t.links[:0]
-	for _, l := range t.links {
-		if l.Peer1.Node.GetName() != name && l.Peer2.Node.GetName() != name {
-			keptLinks = append(keptLinks, l)
-		}
-	}
-	t.links = keptLinks
-	t.linkIndex = nil
-	t.ensureLinkIndexLocked()
-
-	for _, br := range t.bridges {
-		keptPeers := br.Peers[:0]
-		for _, peer := range br.Peers {
-			if peer.Node.GetName() != name {
-				keptPeers = append(keptPeers, peer)
-			}
-		}
-		br.Peers = keptPeers
-
-		keptInterfaces := br.Config.Interfaces[:0]
-		for _, ifName := range br.Config.Interfaces {
-			if strings.Split(ifName, ".")[0] != name {
-				keptInterfaces = append(keptInterfaces, ifName)
-			}
-		}
-		br.Config.Interfaces = keptInterfaces
-	}
+	t.removeNodeLinksLocked(name)
 	t.mu.Unlock()
 
 	if running && mgntNet != nil && mgntIfName != "" {

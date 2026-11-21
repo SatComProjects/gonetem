@@ -121,6 +121,7 @@ The manual is organised in five parts. If you are new to GoNetEm, read
 
    development
    testing
+   refactor-plan
    glossary
 
 Indices and tables

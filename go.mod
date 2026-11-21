@@ -27,6 +27,7 @@ require (
 )
 
 require (
+	github.com/containerd/errdefs v1.0.0
 	github.com/creack/pty v1.1.18
 	github.com/creasty/defaults v1.8.0
 	github.com/elk-language/go-prompt v1.1.5
@@ -41,7 +42,6 @@ require (
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/cilium/ebpf v0.19.0 // indirect
-	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect

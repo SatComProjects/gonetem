@@ -125,7 +125,58 @@ uninstall:
 
 
 
-test:
-	sudo go test ./...
+# ---------------------------------------------------------------------------
+# Quality gates
+#
+# `make check` is the fast, hermetic gate used by contributors and CI.
+# Kernel/Docker integration tests are deliberately separate: they need root,
+# Docker images and a privileged host.
+# ---------------------------------------------------------------------------
 
-.PHONY: clean proto build-amd64 build-amrv7 build-arm64 build-deb-amd64 build-deb-arm64 install-amd64 install-arm64
+GO ?= go
+GOLANGCI_LINT ?= golangci-lint
+COVERAGE_FILE ?= coverage.out
+COVER_PKGS := $(shell $(GO) list ./... 2>/dev/null | grep -v /internal/proto)
+
+fmt:
+	gofmt -w cmd internal
+	$(GOLANGCI_LINT) fmt
+
+fmt-check:
+	@files="$$(gofmt -l cmd internal)"; \
+	if [ -n "$$files" ]; then \
+		echo "gofmt required for:"; echo "$$files"; exit 1; \
+	fi
+
+vet:
+	$(GO) vet ./...
+
+lint:
+	$(GOLANGCI_LINT) run ./...
+
+test-unit:
+	$(GO) test -short -count=1 ./...
+
+test-race:
+	$(GO) test -short -race -count=1 ./...
+
+test-integration:
+	sudo $(GO) test -count=1 ./...
+
+# Kept for backwards compatibility: the full suite needs root.
+test: test-integration
+
+cover:
+	$(GO) test -short -count=1 -covermode=atomic -coverprofile=$(COVERAGE_FILE) $(COVER_PKGS)
+	$(GO) tool cover -func=$(COVERAGE_FILE) | tail -1
+
+govulncheck:
+	govulncheck ./...
+
+build:
+	$(GO) build ./...
+
+check: fmt-check vet lint test-unit test-race build
+
+.PHONY: clean proto build-amd64 build-amrv7 build-arm64 build-deb-amd64 build-deb-arm64 install-amd64 install-arm64 \
+	fmt fmt-check vet lint test test-unit test-race test-integration cover govulncheck build check

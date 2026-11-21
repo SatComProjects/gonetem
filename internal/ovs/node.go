@@ -271,7 +271,7 @@ func (n *OvsNode) ConfigureInterfaces() error {
 	return nil
 }
 
-func (o *OvsNode) AttachMgntInterface(ifName string, ns netns.NsHandle, IPAddress string) error {
+func (o *OvsNode) AttachMgntInterface(ifName string, ns netns.NsHandle, ipAddress string) error {
 	return fmt.Errorf("unable to attach ovs switch to management network")
 }
 
