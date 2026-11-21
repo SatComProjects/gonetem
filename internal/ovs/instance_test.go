@@ -6,14 +6,13 @@ import (
 
 	"github.com/satcomprojects/gonetem/internal/docker"
 	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/testutil"
 	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 func TestOVS_Instance(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	options.InitServerConfig()
+	testutil.RequireImage(t, options.GetDockerImageId(options.ServerConfig.Docker.OvsImage))
 	prjID := utils.RandString(4)
 
 	instance := GetOvsInstance(prjID)

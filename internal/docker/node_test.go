@@ -10,6 +10,7 @@ import (
 
 	"github.com/satcomprojects/gonetem/internal/link"
 	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/testutil"
 	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
@@ -17,10 +18,16 @@ const (
 	NODE_TIMEOUT_OP = 10
 )
 
-func skipUnlessRoot(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("Test requires root privileges.")
+// requireImageForType checks that the image configured for a node type is
+// present locally. It skips the test when Docker or the image is unavailable.
+func requireImageForType(t *testing.T, nodeType string) {
+	t.Helper()
+	options.InitServerConfig()
+	config, err := getDockerConfigFromType(nodeType)
+	if err != nil {
+		t.Fatalf("unable to resolve node type %s: %v", nodeType, err)
 	}
+	testutil.RequireImage(t, options.GetDockerImageId(config.Image))
 }
 
 func TestDockerNode_DetachInterface(t *testing.T) {
@@ -160,10 +167,8 @@ func TestVRRPInterfaceNameIncludesGroup(t *testing.T) {
 }
 
 func TestDockerNode_LazyCreation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	options.InitServerConfig()
+	requireImageForType(t, "host")
 	node, err := NewDockerNode(utils.RandString(4), "host", DockerNodeOptions{
 		Name:       utils.RandString(6),
 		LazyCreate: true,
@@ -191,10 +196,8 @@ func TestDockerNode_LazyCreation(t *testing.T) {
 }
 
 func TestDockerNode_StartStopWithoutInterfaces(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	options.InitServerConfig()
+	requireImageForType(t, "host")
 	prjID := utils.RandString(4)
 	node, err := NewDockerNode(prjID, "host", DockerNodeOptions{
 		Name: utils.RandString(6),
@@ -220,9 +223,10 @@ func TestDockerNode_StartStopWithoutInterfaces(t *testing.T) {
 }
 
 func TestDockerNode_StartStop(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "host")
 	tests := []struct {
 		desc        string
 		name        string
@@ -288,9 +292,10 @@ func TestDockerNode_StartStop(t *testing.T) {
 }
 
 func TestDockerNode_Copy(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "router")
 	prjID := utils.RandString(4)
 	config := DockerNodeOptions{
 		Name: utils.RandString(3),
@@ -324,9 +329,12 @@ func TestDockerNode_Copy(t *testing.T) {
 }
 
 func TestDockerNode_ReadConfigFiles(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "host")
+	requireImageForType(t, "server")
+	requireImageForType(t, "router")
 	prefix := utils.RandString(3)
 	tests := []struct {
 		desc          string
@@ -395,9 +403,12 @@ func TestDockerNode_ReadConfigFiles(t *testing.T) {
 }
 
 func TestDockerNode_Save(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "host")
+	requireImageForType(t, "server")
+	requireImageForType(t, "router")
 	prefix := utils.RandString(3)
 	tests := []struct {
 		desc      string
@@ -485,9 +496,10 @@ func TestDockerNode_Save(t *testing.T) {
 }
 
 func TestDockerNode_AttachLink(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "router")
 	prjID := utils.RandString(4)
 	// Create 2 nodes and create a link between
 	config := DockerNodeOptions{
@@ -537,9 +549,10 @@ func TestDockerNode_AttachLink(t *testing.T) {
 }
 
 func TestDockerNode_ImageOverride(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "host")
 	prjID := utils.RandString(4)
 
 	overrideImage := options.ServerConfig.Docker.Nodes.Host.Image
@@ -582,9 +595,10 @@ func TestDockerNode_ImageOverride(t *testing.T) {
 }
 
 func TestDockerNode_Volumes(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "host")
 	prjID := utils.RandString(4)
 
 	// Create 1 host node

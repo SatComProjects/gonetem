@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/testutil"
 	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
@@ -50,10 +51,11 @@ func setupClient(t *testing.T) (*DockerClient, func()) {
 
 func setupContainer(t *testing.T, imgId DockerImageT) (*DockerClient, string, string, func()) {
 	options.InitServerConfig()
+	image := getImageFromT(imgId)
+	testutil.RequireImage(t, image)
 	client, _ := NewDockerClient()
 
 	ctx := context.Background()
-	image := getImageFromT(imgId)
 	name := utils.RandString(10)
 
 	cID, err := client.Create(ctx, image, name, name, []string{}, true, true)
@@ -109,9 +111,8 @@ func TestNewDockerClientIsShared(t *testing.T) {
 }
 
 func TestDockerClient_ImagePresent(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
+	options.InitServerConfig()
+	testutil.RequireImage(t, getImageFromT(IMG_OVS))
 	client, teardown := setupClient(t)
 	defer teardown()
 
@@ -173,9 +174,7 @@ func TestImagePresentCachedCollapsesLookups(t *testing.T) {
 }
 
 func TestDockerClient_RmMissingIsNoop(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires a Docker daemon")
-	}
+	testutil.RequireDocker(t)
 	client, teardown := setupClient(t)
 	defer teardown()
 
@@ -185,9 +184,7 @@ func TestDockerClient_RmMissingIsNoop(t *testing.T) {
 }
 
 func TestDockerClient_CreateRm(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires privileged Docker networking")
-	}
+	testutil.RequireRoot(t)
 	client, cID, _, teardown := setupContainer(t, IMG_HOST)
 	defer teardown()
 
@@ -223,9 +220,7 @@ func TestDockerClient_CreateRm(t *testing.T) {
 }
 
 func TestDockerClient_Exec(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires privileged Docker networking")
-	}
+	testutil.RequireRoot(t)
 	client, cID, name, teardown := setupStartedContainer(t, IMG_SERVER)
 	defer teardown()
 
@@ -240,9 +235,6 @@ func TestDockerClient_Exec(t *testing.T) {
 }
 
 func TestDockerClient_Copy(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	client, cID, _, teardown := setupContainer(t, IMG_ROUTER)
 	defer teardown()
 
@@ -279,9 +271,7 @@ func TestDockerClient_Copy(t *testing.T) {
 }
 
 func TestDockerClient_Pid(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires privileged Docker networking")
-	}
+	testutil.RequireRoot(t)
 	client, cID, _, teardown := setupContainer(t, IMG_ROUTER)
 	defer teardown()
 
@@ -312,9 +302,6 @@ func TestDockerClient_Pid(t *testing.T) {
 }
 
 func TestDockerClient_List(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	client, _, name, teardown := setupContainer(t, IMG_ROUTER)
 	defer teardown()
 

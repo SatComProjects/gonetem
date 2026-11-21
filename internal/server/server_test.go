@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"path"
-	"path/filepath"
 	"testing"
 
 	"github.com/satcomprojects/gonetem/internal/options"
@@ -144,9 +143,6 @@ func TestServer_UpdateDisabled(t *testing.T) {
 }
 
 func TestServer_Project(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	options.InitServerConfig()
 	ctx := context.Background()
 
@@ -171,23 +167,12 @@ func TestServer_Project(t *testing.T) {
 		t.Errorf("Unexpected number of open projects: %d != 0", len(response.GetProjects()))
 	}
 
-	// create simple project
-	prjPath := "/tmp/prjtest-archive.gnet"
-	if err := createProject(prjPath, simpleNetwork); err != nil {
-		t.Errorf("Unable to create .gnet file: %v", err)
-		return
-	}
-	defer os.Remove(prjPath)
-	data, err := os.ReadFile(prjPath)
-	if err != nil {
-		t.Errorf("Unable to open created .gnet file: %v", err)
-		return
-	}
-
-	// open project
+	// open a project built from namespace nodes: no images or privileges are
+	// needed until the topology is started.
+	prjName := "phase1-project.gnet"
 	openResponse, err := client.ProjectOpen(ctx, &proto.OpenRequest{
-		Name: filepath.Base(prjPath),
-		Data: data,
+		Name: prjName,
+		Data: createProjectArchive(t, namespaceNetwork),
 	})
 	if err != nil {
 		t.Errorf("OpenProject method return an error: %v", err)
@@ -221,9 +206,6 @@ func TestServer_Project(t *testing.T) {
 }
 
 func TestServer_Save(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	options.InitServerConfig()
 	ctx := context.Background()
 
@@ -238,23 +220,12 @@ func TestServer_Save(t *testing.T) {
 	defer conn.Close()
 
 	client := proto.NewNetemClient(conn)
-	// create simple project
-	prjPath := "/tmp/prjtest-archive.gnet"
-	if err := createProject(prjPath, simpleNetwork); err != nil {
-		t.Errorf("Unable to create .gnet file: %v", err)
-		return
-	}
-	defer os.Remove(prjPath)
-	data, err := os.ReadFile(prjPath)
-	if err != nil {
-		t.Errorf("Unable to open created .gnet file: %v", err)
-		return
-	}
-
-	// open project
+	// open a project built from namespace nodes: no images or privileges are
+	// needed until the topology is started.
+	prjName := "phase1-project.gnet"
 	openResponse, err := client.ProjectOpen(ctx, &proto.OpenRequest{
-		Name: filepath.Base(prjPath),
-		Data: data,
+		Name: prjName,
+		Data: createProjectArchive(t, namespaceNetwork),
 	})
 	if err != nil {
 		t.Errorf("OpenProject method return an error: %v", err)
@@ -283,17 +254,15 @@ func TestServer_Save(t *testing.T) {
 		t.Errorf("ReadNetworkFile method return an error: %v", err)
 		return
 	}
-	if string(netResponse.GetData()) != simpleNetwork.network {
+	if string(netResponse.GetData()) != namespaceNetwork.network {
 		t.Errorf("ReadNetworkFile: result different from expected network file")
 	}
 
 	// write network file
 	newNetwork := `
 nodes:
-- name: R1
-  type: docker.router
-  ipv6: false
-  mpls: false
+  n4:
+    type: namespace
 `
 	if _, err := client.WriteNetworkFile(ctx, &proto.WNetworkRequest{
 		Id:   prjID,
@@ -354,9 +323,6 @@ nodes:
 }
 
 func TestServer_NodeAddDel(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	options.InitServerConfig()
 	ctx := context.Background()
 
@@ -372,21 +338,10 @@ func TestServer_NodeAddDel(t *testing.T) {
 
 	client := proto.NewNetemClient(conn)
 
-	// create simple project
-	prjPath := "/tmp/prjtest-nodeadddel.gnet"
-	if err := createProject(prjPath, simpleNetwork); err != nil {
-		t.Fatalf("Unable to create .gnet file: %v", err)
-	}
-	defer os.Remove(prjPath)
-	data, err := os.ReadFile(prjPath)
-	if err != nil {
-		t.Fatalf("Unable to open created .gnet file: %v", err)
-	}
-
-	// open project
+	prjName := "phase1-nodeadddel.gnet"
 	openResponse, err := client.ProjectOpen(ctx, &proto.OpenRequest{
-		Name: filepath.Base(prjPath),
-		Data: data,
+		Name: prjName,
+		Data: createProjectArchive(t, namespaceNetwork),
 	})
 	if err != nil {
 		t.Fatalf("OpenProject method return an error: %v", err)
@@ -413,8 +368,7 @@ func TestServer_NodeAddDel(t *testing.T) {
 		PrjId: prjID,
 		Node:  "newhost",
 		Config: &proto.NodeConfigMsg{
-			Type:   "docker.host",
-			Ipv6:   true,
+			Type:   "namespace",
 			Launch: false,
 		},
 		Sync: true,

@@ -88,6 +88,7 @@ Repository layout
      options/                     configuration, version, TLS
      update/                      self-update pipeline
      utils/                        project archive, helpers
+     testutil/                     shared test capability checks and fixtures
    conf/                          default config, systemd unit, sysctl
    docker/                        image sources (host, server, frr, bmv2, ovs, vyos)
    scripts/                       certificate generation, project generation, migration
@@ -162,6 +163,7 @@ The fast, hermetic gate is:
 .. code-block:: bash
 
    make check       # gofmt, go vet, golangci-lint, unit, race, build
+   make cover-check # hermetic coverage profile + per-package ratchet
 
 The privileged gate is separate because it needs root, Docker and kernel
 support:

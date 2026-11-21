@@ -102,6 +102,7 @@ Run the fast gate:
 
 ```bash
 make check          # gofmt, vet, golangci-lint, unit, race, build
+make cover-check    # coverage profile + .coverage-thresholds ratchet
 ```
 
 Run the relevant integration work when behaviour touches the kernel, Docker,
@@ -132,8 +133,10 @@ Then:
 | `internal/options` | Configuration parsing, defaults, TLS, version. |
 | `internal/update` | Self-update pipeline. |
 | `internal/utils` | Archive and small shared helpers. |
+| `internal/testutil` | Capability checks (`RequireRoot`/`Docker`/`Image`) and test fixtures. |
 | `internal/proto` | Generated protobuf/gRPC code. **Never edit by hand.** |
 | `tests/` | Python gRPC end-to-end tests against a running server. |
+| `scripts/check-coverage.sh` | Per-package coverage ratchet used by `make cover-check` and CI. |
 | `docs/` | Sphinx manual and the refactor roadmap. |
 
 Run `make proto` only when `internal/proto/netem.proto` changes, and commit the
@@ -179,15 +182,20 @@ Additional rules:
 | --- | --- | --- |
 | Unit | `make test-unit` (`go test -short`) | No root, no Docker, no kernel privileges, no network. |
 | Race | `make test-race` | Same as unit; required for concurrency changes. |
+| Coverage | `make cover-check` | Hermetic profile plus the `.coverage-thresholds` ratchet. |
 | Integration | `make test-integration` | Root, Docker images, kernel namespaces/qdiscs. |
 | End-to-end | `pytest -s tests/test_grpc_link_qos.py` | Running server; validates user-visible behaviour. |
 
 - A test that needs root, Docker, a kernel module or a running server is an
-  integration test: guard it with `testing.Short()` (and/or `skipUnlessRoot`)
-  so the unit suite stays hermetic. It must still run in the integration job.
+  integration test: guard it with `testutil.RequireRoot`, `RequireDocker` or
+  `RequireImage` so the unit suite stays hermetic and the privileged suite fails
+  when `GONETEM_REQUIRE_INTEGRATION=1` is set. It must still run in the
+  integration job.
 - Prefer fakes at consumer-defined interfaces over mocking external commands.
-  Existing seams include `routeApplier`, `qosBatchApplier`, injected node
-  instances and `Updater` configuration.
+  Existing seams include `routeApplier`, `qosBatchApplier`, the topology node
+  factory, injected nodes and `Updater` configuration.
+- Raise coverage floors in `.coverage-thresholds` when a phase lands; never
+  lower them.
 - Tests must be deterministic. Avoid sleeps; use channels, contexts and bounded
   waits. Do not write to the host network namespace; use private namespaces and
   clean them up.
@@ -223,6 +231,7 @@ documented exception.
 - [ ] The smallest implementation makes them pass; no tests were weakened.
 - [ ] SOLID and dependency rules reviewed; no new global state.
 - [ ] `make check` passes locally.
+- [ ] `make cover-check` passes when tests or covered code changed.
 - [ ] Relevant integration/e2e checks pass, or the pull request says exactly
       what could not be run and why.
 - [ ] Documentation, API reference and configuration docs updated in the same

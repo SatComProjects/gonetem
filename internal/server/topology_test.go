@@ -9,13 +9,15 @@ import (
 	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
+type topologyTestNode struct {
+	name   string
+	kind   string
+	launch bool
+}
+
 type TopologyTestData struct {
 	network string
-	nodes   []struct {
-		name   string
-		kind   string
-		launch bool
-	}
+	nodes   []topologyTestNode
 }
 
 var (
@@ -40,11 +42,7 @@ links:
   peer2: switch.1
 - peer1: hostNotLaunch.0
   peer2: switch.2`,
-		nodes: []struct {
-			name   string
-			kind   string
-			launch bool
-		}{
+		nodes: []topologyTestNode{
 			{
 				name:   "switch",
 				kind:   "ovs",
@@ -65,6 +63,29 @@ links:
 				kind:   "docker",
 				launch: false,
 			},
+		},
+	}
+	namespaceNetwork = TopologyTestData{
+		network: `
+nodes:
+  n1:
+    type: namespace
+  n2:
+    type: namespace
+  n3:
+    type: namespace
+    launch: false
+links:
+- peer1: n1.0
+  peer2: n2.0
+  delay: 5
+- peer1: n1.1
+  peer2: n3.0
+  loss: 1`,
+		nodes: []topologyTestNode{
+			{name: "n1", kind: "namespace", launch: true},
+			{name: "n2", kind: "namespace", launch: true},
+			{name: "n3", kind: "namespace", launch: false},
 		},
 	}
 	updateLinkTopo = `
@@ -109,10 +130,7 @@ func checkTopology(data TopologyTestData, topology *NetemTopologyManager, t *tes
 }
 
 func TestTopology_UpdateLink(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires root and Docker networking")
-	}
-	options.InitServerConfig()
+	requireRouterCapabilities(t)
 	tests := []struct {
 		desc          string
 		topology      string
@@ -144,13 +162,7 @@ func TestTopology_UpdateLink(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
 			prjID := utils.RandString(4)
-			// create temp dir to save configuration files
-			dir, err := os.MkdirTemp("/tmp", "ntmtst")
-			if err != nil {
-				t.Errorf("Unable to create temp folder: %v", err)
-				return
-			}
-			defer os.RemoveAll(dir)
+			dir := t.TempDir()
 
 			if err := os.WriteFile(path.Join(dir, "network.yml"), []byte(tt.topology), 0644); err != nil {
 				t.Errorf("Unable to create topology file: %v", err)
@@ -201,9 +213,6 @@ func TestTopology_UpdateLink(t *testing.T) {
 }
 
 func TestTopology_Load(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	options.InitServerConfig()
 	tests := []struct {
 		desc          string
@@ -212,9 +221,9 @@ func TestTopology_Load(t *testing.T) {
 		expectedError bool
 	}{
 		{
-			desc:     "Topology: load simple topology",
-			topology: simpleNetwork.network,
-			nodes:    []string{"R1", "host"},
+			desc:     "Topology: load namespace topology",
+			topology: namespaceNetwork.network,
+			nodes:    []string{"n1", "n2", "n3"},
 		},
 		{
 			desc:          "Topology: load bad topology",
@@ -226,13 +235,7 @@ func TestTopology_Load(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
 			prjID := utils.RandString(4)
-			// create temp dir to save configuration files
-			dir, err := os.MkdirTemp("/tmp", "ntmtst")
-			if err != nil {
-				t.Errorf("Unable to create temp folder: %v", err)
-				return
-			}
-			defer os.RemoveAll(dir)
+			dir := t.TempDir()
 
 			if err := os.WriteFile(path.Join(dir, "network.yml"), []byte(tt.topology), 0644); err != nil {
 				t.Errorf("Unable to create topology file: %v", err)
@@ -261,9 +264,7 @@ func TestTopology_Load(t *testing.T) {
 }
 
 func TestTopology_Save(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires root and Docker networking")
-	}
+	requireSimpleNetworkCapabilities(t)
 	prjID := utils.RandString(4)
 	// create temp dir to save configuration files
 	dir, err := os.MkdirTemp("/tmp", "ntmtst")

@@ -136,7 +136,8 @@ uninstall:
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
 COVERAGE_FILE ?= coverage.out
-COVER_PKGS := $(shell $(GO) list ./... 2>/dev/null | grep -v /internal/proto)
+COVERAGE_THRESHOLDS ?= .coverage-thresholds
+COVER_PKGS := $(shell $(GO) list ./... 2>/dev/null | grep -v -e /internal/proto -e /internal/testutil)
 
 fmt:
 	gofmt -w cmd internal
@@ -155,13 +156,13 @@ lint:
 	$(GOLANGCI_LINT) run ./...
 
 test-unit:
-	$(GO) test -short -count=1 ./...
+	$(GO) test -short -shuffle=on -count=1 ./...
 
 test-race:
-	$(GO) test -short -race -count=1 ./...
+	$(GO) test -short -race -shuffle=on -count=1 ./...
 
 test-integration:
-	sudo $(GO) test -count=1 ./...
+	sudo env "PATH=$$PATH" GONETEM_REQUIRE_INTEGRATION=1 $(GO) test -count=1 ./...
 
 # Kept for backwards compatibility: the full suite needs root.
 test: test-integration
@@ -169,6 +170,9 @@ test: test-integration
 cover:
 	$(GO) test -short -count=1 -covermode=atomic -coverprofile=$(COVERAGE_FILE) $(COVER_PKGS)
 	$(GO) tool cover -func=$(COVERAGE_FILE) | tail -1
+
+cover-check: cover
+	./scripts/check-coverage.sh $(COVERAGE_FILE) $(COVERAGE_THRESHOLDS)
 
 govulncheck:
 	govulncheck ./...
@@ -179,4 +183,4 @@ build:
 check: fmt-check vet lint test-unit test-race build
 
 .PHONY: clean proto build-amd64 build-amrv7 build-arm64 build-deb-amd64 build-deb-arm64 install-amd64 install-arm64 \
-	fmt fmt-check vet lint test test-unit test-race test-integration cover govulncheck build check
+	fmt fmt-check vet lint test test-unit test-race test-integration cover cover-check govulncheck build check

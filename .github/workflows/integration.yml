@@ -47,7 +47,7 @@ jobs:
           done
 
       - name: Run privileged Go suite
-        run: sudo env "PATH=$PATH" go test -count=1 -timeout=30m ./...
+        run: sudo env "PATH=$PATH" GONETEM_REQUIRE_INTEGRATION=1 go test -count=1 -timeout=30m ./...
 
       - name: Build binaries
         run: make build-amd64
