@@ -2,19 +2,12 @@ package ovs
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
-	"os"
-	"path"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/satcomprojects/gonetem/internal/docker"
-	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/sirupsen/logrus"
-	"github.com/vishvananda/netns"
 )
 
 type State int
@@ -28,18 +21,24 @@ const (
 	maxAttempts = 10
 )
 
-var (
-	ovsInstances = make(map[string]*OvsProjectInstance)
-	mutex        = &sync.Mutex{}
-)
-
+// OvsProjectInstance is the OVS adapter for one project. The Docker client is
+// injected by the composition root; the instance never constructs one.
+//
+// mu guards state and bridges. Start holds it for the whole transition so two
+// concurrent calls cannot start the container twice; bridge methods hold it
+// while they execute the corresponding ovs-vsctl command and update the
+// bookkeeping. Exec and the other Docker calls do not take mu on their own, so
+// callers may invoke them while the bridge lock is held.
 type OvsProjectInstance struct {
 	prjID       string
 	containerId string
 	client      docker.ContainerNodeAPI
-	state       State
-	bridges     []string
-	Logger      *logrus.Entry
+
+	mu      sync.RWMutex
+	state   State
+	bridges []string
+
+	Logger *logrus.Entry
 }
 
 func (o *OvsProjectInstance) dockerClient() (docker.ContainerNodeAPI, error) {
@@ -49,221 +48,50 @@ func (o *OvsProjectInstance) dockerClient() (docker.ContainerNodeAPI, error) {
 	return o.client, nil
 }
 
+// isStarted reports whether the OVS server container finished starting.
+func (o *OvsProjectInstance) isStarted() bool {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.state == started
+}
+
+// Start starts the OVS server container and waits until ovs-vsctl responds.
+// The state lock is held for the whole transition, so concurrent Start calls
+// start the container once and bridge updates never observe a partially
+// started instance.
 func (o *OvsProjectInstance) Start() error {
-	if o.state != started {
-		client, err := o.dockerClient()
-		if err != nil {
-			return err
-		}
+	o.mu.Lock()
+	defer o.mu.Unlock()
 
-		ctx := context.Background()
-		if err := client.Start(ctx, o.containerId); err != nil {
-			return err
-		}
-
-		// wait that ovs server has been ready before return
-		attempt := 0
-		infoCmd := []string{"ovs-vsctl", "show"}
-		for attempt < maxAttempts {
-			o.Logger.Debugf("Wait ovs-server is ready - attempt %d\n", attempt)
-			if err = o.Exec(infoCmd); err == nil {
-				break
-			}
-			attempt++
-			time.Sleep(100 * time.Millisecond)
-		}
-		if err != nil {
-			return err
-		}
-		o.state = started
+	if o.state == started {
+		return nil
 	}
 
-	return nil
-}
-
-func (o *OvsProjectInstance) GetNetns() (netns.NsHandle, error) {
-	if o.state != started {
-		return netns.NsHandle(0), fmt.Errorf("ovswitch instance not running")
-	}
-
-	client, err := o.dockerClient()
-	if err != nil {
-		return netns.NsHandle(0), err
-	}
-
-	pid, err := client.Pid(context.Background(), o.containerId)
-	if err != nil {
-		return netns.NsHandle(0), err
-	}
-	return netns.GetFromPid(pid)
-}
-
-func (o *OvsProjectInstance) Capture(ctx context.Context, ifName string, out io.Writer) error {
-	if o.state != started {
-		return fmt.Errorf("ovswitch instance not running")
-	}
-
-	client, err := o.dockerClient()
-	if err != nil {
-		return err
-	}
-
-	cmd := []string{"tcpdump", "-w", "-", "-s", "0", "-U", "-i", ifName}
-	return client.ExecOutStream(ctx, o.containerId, cmd, out)
-}
-
-func (o *OvsProjectInstance) Exec(cmd []string) error {
 	client, err := o.dockerClient()
 	if err != nil {
 		return err
 	}
 
 	ctx := context.Background()
-	if _, err := client.Exec(ctx, o.containerId, cmd); err != nil {
+	if err := client.Start(ctx, o.containerId); err != nil {
 		return err
 	}
 
-	return nil
-}
-
-func (o *OvsProjectInstance) findBr(brName string) int {
-	for idx, br := range o.bridges {
-		if br == brName {
-			return idx
+	// wait that ovs server has been ready before return
+	attempt := 0
+	infoCmd := []string{"ovs-vsctl", "show"}
+	for attempt < maxAttempts {
+		o.Logger.Debugf("Wait ovs-server is ready - attempt %d\n", attempt)
+		if err = o.Exec(infoCmd); err == nil {
+			break
 		}
+		attempt++
+		time.Sleep(100 * time.Millisecond)
 	}
-	return -1
-}
-
-func (o *OvsProjectInstance) AddBr(brName string) error {
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	if o.findBr(brName) != -1 {
-		return fmt.Errorf("switch %s already exists", brName)
-	}
-
-	cmd := []string{"ovs-vsctl", "add-br", brName}
-	if err := o.Exec(cmd); err != nil {
-		return err
-	}
-	o.bridges = append(o.bridges, brName)
-
-	return nil
-}
-
-func (o *OvsProjectInstance) DelBr(brName string) error {
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	brIdx := o.findBr(brName)
-	if brIdx != -1 {
-		cmd := []string{"ovs-vsctl", "del-br", brName}
-		if err := o.Exec(cmd); err != nil {
-			return err
-		}
-
-		// remove br from list
-		o.bridges[brIdx] = o.bridges[len(o.bridges)-1]
-		o.bridges = o.bridges[:len(o.bridges)-1]
-	}
-
-	return nil
-}
-
-func (o *OvsProjectInstance) AddBridgeWithPorts(brName string, ifNames []string) error {
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	if o.findBr(brName) != -1 {
-		return fmt.Errorf("switch %s already exists", brName)
-	}
-
-	cmd := []string{"ovs-vsctl", "--may-exist", "add-br", brName}
-	for _, ifName := range ifNames {
-		cmd = append(cmd, "--", "--may-exist", "add-port", brName, ifName)
-	}
-	if err := o.Exec(cmd); err != nil {
-		return err
-	}
-
-	o.bridges = append(o.bridges, brName)
-	return nil
-}
-
-func (o *OvsProjectInstance) AddPort(brName, ifName string) error {
-	cmd := []string{"ovs-vsctl", "add-port", brName, ifName}
-	return o.Exec(cmd)
-}
-
-func (o *OvsProjectInstance) DelPort(brName, ifName string) error {
-	cmd := []string{"ovs-vsctl", "del-port", brName, ifName}
-	return o.Exec(cmd)
-}
-
-func (o *OvsProjectInstance) LoadConfig(name, brName, confPath string, timeout int) ([]string, error) {
-	var messages []string
-
-	client, err := o.dockerClient()
-	if err != nil {
-		return messages, err
-	}
-
-	ctx := context.Background()
-	if timeout > 0 {
-		var cancel context.CancelFunc
-
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-		defer cancel()
-	}
-
-	tmpConfFile := "/tmp/" + name + ".conf"
-	confFile := path.Join(confPath, name+".conf")
-	if _, err := os.Stat(confFile); os.IsNotExist(err) {
-		return messages, nil
-	}
-
-	if err := client.CopyTo(ctx, o.containerId, confFile, tmpConfFile); err != nil {
-		return messages, fmt.Errorf("unable to copy config file %s:\n\t%w", confFile, err)
-	}
-
-	cmd := []string{"ovs-config.py", "-a", "load", "-c", tmpConfFile, brName}
-	output, err := client.Exec(ctx, o.containerId, cmd)
-	if err != nil {
-		return messages, fmt.Errorf("unable to load config file %s:\n\t%w", confFile, err)
-	} else if output != "" {
-		messages = strings.Split(output, "\n")
-	}
-
-	return messages, nil
-}
-
-func (o *OvsProjectInstance) SaveConfig(name, brName, dstPath string, timeout int) error {
-	client, err := o.dockerClient()
 	if err != nil {
 		return err
 	}
-
-	ctx := context.Background()
-	if timeout > 0 {
-		var cancel context.CancelFunc
-
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-		defer cancel()
-	}
-
-	tmpConfFile := "/tmp/" + name + ".conf"
-	confFile := path.Join(dstPath, name+".conf")
-
-	cmd := []string{"ovs-config.py", "-a", "save", "-c", tmpConfFile, brName}
-	if _, err := client.Exec(ctx, o.containerId, cmd); err != nil {
-		return fmt.Errorf("unable to save config in file %s:\n\t%w", confFile, err)
-	}
-
-	if err := client.CopyFrom(ctx, o.containerId, tmpConfFile, confFile); err != nil {
-		msg := fmt.Sprintf("Unable to save file %s:\n\t%v", confFile, err)
-		return errors.New(msg)
-	}
+	o.state = started
 
 	return nil
 }
@@ -282,76 +110,4 @@ func (o *OvsProjectInstance) Close() error {
 	}
 
 	return nil
-}
-
-func NewOvsInstance(client docker.ContainerNodeAPI, prjID string) (*OvsProjectInstance, error) {
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	_, ok := ovsInstances[prjID]
-	if ok {
-		return nil, fmt.Errorf("ovswitch container already exists")
-	}
-
-	if client == nil {
-		return nil, fmt.Errorf("docker client is required to create an OVS instance")
-	}
-
-	imgName := options.GetDockerImageId(options.ServerConfig.Docker.OvsImage)
-	present, err := client.IsImagePresent(context.Background(), imgName)
-	if err != nil {
-		return nil, err
-	} else if !present {
-		return nil, fmt.Errorf("ovswitch image %s not present", imgName)
-	}
-
-	containerName := fmt.Sprintf("%s%s.ovs", options.NETEM_ID, prjID)
-	containerId, err := client.Create(
-		context.Background(),
-		imgName,
-		containerName,
-		"ovs",
-		[]string{},
-		false,
-		false)
-	if err != nil {
-		return nil, err
-	}
-
-	ovsInstances[prjID] = &OvsProjectInstance{
-		prjID:       prjID,
-		containerId: containerId,
-		client:      client,
-		state:       created,
-		Logger: logrus.WithFields(logrus.Fields{
-			"project": prjID,
-			"node":    "ovs-instance",
-		}),
-	}
-
-	return ovsInstances[prjID], nil
-}
-
-func GetOvsInstance(prjID string) *OvsProjectInstance {
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	instance, ok := ovsInstances[prjID]
-	if ok {
-		return instance
-	}
-	return nil
-}
-
-func CloseOvsInstance(prjID string) error {
-	mutex.Lock()
-	ovs, ok := ovsInstances[prjID]
-	if !ok {
-		mutex.Unlock()
-		return fmt.Errorf("ovswitch container not found")
-	}
-	delete(ovsInstances, prjID)
-	mutex.Unlock()
-
-	return ovs.Close()
 }
