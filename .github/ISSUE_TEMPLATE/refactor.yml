@@ -7,7 +7,7 @@ body:
     id: phase
     attributes:
       label: Refactor phase
-      description: Phase from docs/source/refactor-plan.rst.
+      description: Phase from docs/refactor-plan.md.
       options:
         - "Phase 0 - Baseline and guardrails"
         - "Phase 1 - Hermetic test architecture"

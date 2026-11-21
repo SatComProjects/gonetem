@@ -2,8 +2,8 @@
 
 Thanks for contributing. GoNetEm follows specification-first development and
 Red-Green-Refactor. This file is the short version; the full manual is in
-[`docs/source/development.rst`](docs/source/development.rst), the quality
-roadmap is [`docs/source/refactor-plan.rst`](docs/source/refactor-plan.rst),
+[`docs/development.md`](docs/development.md), the quality
+roadmap is [`docs/refactor-plan.md`](docs/refactor-plan.md),
 and AI agents must also follow [`AGENTS.md`](AGENTS.md).
 
 ## Quick start
@@ -111,13 +111,12 @@ Required checks on pull requests:
 - Lint: gofmt, `go vet`, `golangci-lint`, `go mod tidy -diff`.
 - Unit tests: `go test -short -race`, coverage artifact.
 - Build: both binaries.
-- Docs: Sphinx with warnings as errors.
+- Docs: local Markdown check (`python3 scripts/check-docs.py`).
 - Vulnerability scan: `make govulncheck`. Only reviewed exceptions in
   `.govulncheck-allow` are accepted; add one only with a written justification.
 
-The privileged integration suite is defined for nightly/manual runs and
-activates on the default branch after the next `master` release; until then run
-`make test-integration` locally. Do not bypass a failing check; fix the cause or
+The privileged integration suite runs nightly and on demand against the default
+branch; run `make test-integration` locally before merging privileged changes. Do not bypass a failing check; fix the cause or
 document a reviewed exception.
 
 ## Commits and pull requests
@@ -151,16 +150,17 @@ Review checklist:
 
 ## Documentation
 
-The manual is Sphinx/reStructuredText under `docs/source`:
+The manual is plain Markdown under `docs/`, indexed by
+[`docs/README.md`](docs/README.md). Browse it on GitHub or in any local
+Markdown viewer; there is no site build.
 
 ```bash
-python3 -m venv /tmp/docsvenv
-/tmp/docsvenv/bin/pip install -r docs/requirements.txt
-/tmp/docsvenv/bin/sphinx-build -E -n -W -b html docs/source docs/build/html
+python3 scripts/check-docs.py
 ```
 
 User-visible configuration, commands and API changes must be documented in the
-same pull request. Every new page needs a label and a toctree entry.
+same pull request. Every new page starts with one `#` title and is linked from
+`docs/README.md`; use relative links and fenced code blocks with a language.
 
 ## Reporting security issues
 
