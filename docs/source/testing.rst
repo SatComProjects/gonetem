@@ -22,15 +22,16 @@ Running
 
 .. code-block:: bash
 
-   sudo go test ./...              # or: make test
+   make test-unit                  # hermetic: no root, Docker images or daemon
+   make test-race                  # hermetic suite under -race
+   sudo go test ./...              # full suite (same as: make test-integration)
    sudo go test ./internal/server/... ./internal/link/... -v
    sudo go test -run TestLinkSyncMany ./internal/server/ -v
-   sudo go test -race ./internal/server/...
 
 Root is required for everything that touches namespaces, netlink, qdiscs or
-Docker. Tests that need it call ``skipUnlessRoot`` and are skipped without root
-instead of failing, so a quick ``go test ./...`` without ``sudo`` still
-exercises the pure logic.
+Docker. Tests that need it call ``skipUnlessRoot`` and/or ``testing.Short()``
+and are skipped without the capability instead of failing. The unit suite must
+stay hermetic; the guarded tests still run in the privileged suite.
 
 The race detector is useful for the concurrency tests; it is slower, so run it
 on the server and docker packages rather than on everything.
@@ -218,28 +219,30 @@ Output and flakiness
 Continuous integration
 ----------------------
 
-There is no CI configuration in the repository at the time of writing. A
-complete check on a suitable runner is:
+Every pull request to ``develop`` or ``master`` must pass:
 
-.. code-block:: bash
+* **Lint** - ``gofmt``, ``go vet ./...``, ``golangci-lint run ./...`` and
+  ``go mod tidy -diff``;
+* **Unit tests** - ``go test -short -race -shuffle=on ./...`` plus a coverage
+  artifact;
+* **Build** - ``make build-amd64``;
+* **Docs** - Sphinx with ``-E -n -W``.
 
-   go build ./...
-   go vet ./...
-   sudo go test ./...
-   make build-amd64
-   # with a server running:
-   pip install -r tests/requirements.txt
-   python -m pytest -s tests/test_grpc_link_qos.py -v
-
-A CI runner needs:
+The **vulnerability scan** (``govulncheck ./...``) also runs on every pull
+request but is advisory during the Phase 0 baseline; it becomes required in the
+hardening phase. The privileged integration workflow (``.github/workflows/integration.yml``)
+runs nightly and manually. It pulls the node images, runs the full Go suite as
+root, starts ``gonetem-server`` and executes the Python gRPC suite. It becomes a
+required check once its pass rate is stable. A privileged runner needs:
 
 * Linux with Docker (or Docker-in-Docker) and privileges to create namespaces;
 * the gonetem images pre-pulled;
-* root for the Go kernel tests and for the server.
+* root for the Go kernel tests and for the server;
+* optional MPLS kernel modules for the node images.
 
-If privileged runners are unavailable, run the pure-logic tests without
-``sudo`` (they skip kernel cases) and keep the integration suite for a
-self-hosted runner.
+Do not replace a failing check with a skip. Unit tests that need privileges
+must guard themselves with ``testing.Short()`` and still run in the integration
+workflow; see :ref:`refactor-plan` phase 1.
 
 Manual smoke test
 -----------------

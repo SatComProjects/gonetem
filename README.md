@@ -115,8 +115,9 @@ configured for Read the Docs. Highlights:
   [nodes](docs/source/internals/nodes.rst),
   [console](docs/source/internals/console.rst),
   [update](docs/source/internals/update.rst)).
-* [Development](docs/source/development.rst) and
-  [testing](docs/source/testing.rst).
+* [Development](docs/source/development.rst),
+  [testing](docs/source/testing.rst) and the
+  [SOLID/TDD refactor plan](docs/source/refactor-plan.rst).
 * [Deployment](docs/source/deployment.rst),
   [troubleshooting](docs/source/troubleshooting.rst),
   [FAQ](docs/source/faq.rst), [glossary](docs/source/glossary.rst).
@@ -200,11 +201,26 @@ Testing
 -------
 
 ```bash
-sudo go test ./...                                    # unit + kernel tests
+make check                                            # hermetic: fmt, lint, unit, race, build
+make test-integration                                 # root + Docker + kernel tests
 python -m pytest -s tests/test_grpc_link_qos.py -v    # against a running server
 ```
 
-See [docs/source/testing.rst](docs/source/testing.rst).
+The project follows specification-first development and Red-Green-Refactor.
+See [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md) for AI agents,
+[docs/source/development.rst](docs/source/development.rst) and
+[docs/source/refactor-plan.rst](docs/source/refactor-plan.rst).
+
+Contributing
+------------
+
+Development happens on `develop`; `master` receives releases only. Branch from
+`develop`, open pull requests against it, and follow the six-stage
+specification-first/TDD workflow. The pull request template asks for acceptance
+criteria, RED/GREEN evidence, validation commands and residual risk.
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). AI agents must also read
+[AGENTS.md](AGENTS.md).
 
 Graphical user interface
 ------------------------

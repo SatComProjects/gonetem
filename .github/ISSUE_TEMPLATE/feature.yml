@@ -1,0 +1,59 @@
+name: Feature or behaviour change
+description: Propose a feature, behaviour change or API change with clear acceptance criteria.
+title: "feat: "
+labels: ["enhancement", "needs-spec"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Specification first: describe the required behaviour and how it will be
+        verified before proposing an implementation. See `AGENTS.md` and
+        `docs/source/development.rst`.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and motivation
+      description: What user or operational problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: Required behaviour
+      description: Describe the expected behaviour, inputs, outputs and error cases.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Testable statements. Each should map to at least one automated test.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: edge-cases
+    attributes:
+      label: Edge cases and failure modes
+      description: Empty input, permissions, concurrency, backward compatibility, cancellation, partial failure.
+    validations:
+      required: true
+  - type: textarea
+    id: architecture
+    attributes:
+      label: Architectural impact
+      description: Packages, interfaces, dependency direction, configuration, gRPC/project format compatibility. Note any SOLID concerns.
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification plan
+      description: Unit tests, integration tests and manual checks that will prove the behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Simpler options and why they were rejected.
