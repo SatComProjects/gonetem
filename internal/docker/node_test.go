@@ -40,19 +40,21 @@ func requireImageForType(t *testing.T, nodeType string) {
 }
 
 func TestDockerNode_DetachInterface(t *testing.T) {
-	node := &DockerNode{Interfaces: make(map[string]*DockerInterface)}
-	node.Interfaces["eth0"] = &DockerInterface{State: link.IFSTATE_UP}
+	node := newUnitDockerNode(t, &fakeContainerClient{})
+	if err := node.AttachInterface("eth0", 0, false); err != nil {
+		t.Fatalf("AttachInterface returned an error: %v", err)
+	}
 
 	if err := node.DetachInterface("eth0"); err != nil {
 		t.Fatalf("DetachInterface returned an error: %v", err)
 	}
-	if _, ok := node.Interfaces["eth0"]; ok {
+	if _, ok := node.GetInterfacesState()["eth0"]; ok {
 		t.Fatal("interface was not removed from bookkeeping")
 	}
 }
 
 func TestDockerNode_InterfaceMapConcurrentAccess(t *testing.T) {
-	node := &DockerNode{Interfaces: make(map[string]*DockerInterface)}
+	node := newUnitDockerNode(t, &fakeContainerClient{})
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
@@ -102,12 +104,19 @@ func TestDockerNode_ResolvePidCachesResult(t *testing.T) {
 }
 
 func TestDockerNode_InvalidatePid(t *testing.T) {
-	node := &DockerNode{pid: 4242}
+	node := &DockerNode{}
+	if _, err := node.resolvePid(func() (int, error) { return 4242, nil }); err != nil {
+		t.Fatalf("seeding the PID cache failed: %v", err)
+	}
 
 	node.invalidatePid()
 
-	if node.pid != 0 {
-		t.Fatalf("pid was not invalidated: %d", node.pid)
+	pid, err := node.resolvePid(func() (int, error) { return 777, nil })
+	if err != nil {
+		t.Fatalf("resolvePid after invalidation returned an error: %v", err)
+	}
+	if pid != 777 {
+		t.Fatalf("pid after invalidation = %d, want 777", pid)
 	}
 }
 
@@ -115,7 +124,10 @@ func TestDockerNode_GetRunningNetnsUsesCachedPid(t *testing.T) {
 	// A cached PID must be used without falling back to Docker inspection.
 	// Using the test process PID proves the cached path resolves a namespace
 	// while the node has no container ID.
-	node := &DockerNode{pid: os.Getpid()}
+	node := &DockerNode{}
+	if _, err := node.resolvePid(func() (int, error) { return os.Getpid(), nil }); err != nil {
+		t.Fatalf("seeding the PID cache failed: %v", err)
+	}
 
 	ns, err := node.GetRunningNetns()
 	if err != nil {
