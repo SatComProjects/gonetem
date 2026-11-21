@@ -3,8 +3,8 @@
 # Ratchet: raise a value when a phase lands; never lower one. The total covers
 # internal packages only (generated protobuf, cmd and testutil are excluded).
 # Phase 1 baseline: 32.3 % total, 58.3 % server.
-total 45.5
-internal/server 64
+total 46
+internal/server 64.5
 internal/options 39
 internal/update 52
 internal/utils 56

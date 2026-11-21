@@ -69,7 +69,7 @@ func PrepareInterfaces(ifNames []string, namespace netns.NsHandle, disableTso, e
 // namespace, so /proc/sys/net resolves to the namespace selected by withNetns.
 func enableMplsInput(ifName string) error {
 	path := filepath.Join("/proc/sys/net/mpls/conf", ifName, "input")
-	if err := os.WriteFile(path, []byte("1"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("1"), 0600); err != nil {
 		return err
 	}
 	return nil

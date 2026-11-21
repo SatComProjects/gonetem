@@ -53,7 +53,7 @@ func (p *NetemPrompt) save(client proto.NetemClient, dstPath string) {
 
 		case proto.ProjectSaveMsg_DATA:
 			ProgressForceComplete(bars)
-			if err := os.WriteFile(dstPath, msg.GetData(), 0644); err != nil {
+			if err := os.WriteFile(dstPath, msg.GetData(), 0600); err != nil {
 				RedPrintf("Unable to write saved project to %s: %v\n", dstPath, err)
 			}
 		}
@@ -173,7 +173,7 @@ func (p *NetemPrompt) Edit(client proto.NetemClient, cmdArgs []string) {
 	}
 	// write temp file for edition
 	tempFilename := path.Join("/tmp", "gonetem-network-"+p.prjID)
-	if err := os.WriteFile(tempFilename, response.GetData(), 0644); err != nil {
+	if err := os.WriteFile(tempFilename, response.GetData(), 0600); err != nil {
 		RedPrintf("Unable to write temp file for edition: %v\n", err)
 		return
 	}

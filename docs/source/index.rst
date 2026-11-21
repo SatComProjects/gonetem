@@ -113,6 +113,7 @@ The manual is organised in five parts. If you are new to GoNetEm, read
    internals/nodes
    internals/console
    internals/update
+   adr/index
 
 .. toctree::
    :maxdepth: 2
@@ -136,4 +137,4 @@ Project links
 * Source code: https://github.com/satcomprojects/gonetem
 * Graphical user interface: https://github.com/mroy31/gonetem-ui
 * License: GNU General Public License v3.0 or later (see ``COPYING``)
-* Version documented here: **0.8.0**
+* Version documented here: **0.9.0**

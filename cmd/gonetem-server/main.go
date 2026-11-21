@@ -119,6 +119,6 @@ func main() {
 	}
 	// remove unix socket file
 	if _, err := os.Stat(options.ServerConfig.Listen); err == nil {
-		os.Remove(options.ServerConfig.Listen)
+		_ = os.Remove(options.ServerConfig.Listen)
 	}
 }

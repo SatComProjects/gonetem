@@ -227,7 +227,7 @@ The prompt is entered with ``open`` or ``connect``:
 
 .. code-block:: text
 
-   Welcome to gonetem console 0.8.0
+   Welcome to gonetem console 0.9.0
    Please use `exit` to close the project
 
    [lab]>

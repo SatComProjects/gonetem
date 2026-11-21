@@ -59,7 +59,7 @@ func (t *NetemTopologyManager) Load() error {
 
 			if err != nil {
 				if node != nil {
-					node.Close()
+					_ = node.Close()
 				}
 
 				return fmt.Errorf("unable to create node %s: %w", name, err)

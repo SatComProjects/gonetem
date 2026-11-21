@@ -20,8 +20,8 @@ func writeFileAtomic(filename string, data []byte, perm os.FileMode) error {
 	tmpName := tmp.Name()
 
 	cleanup := func() {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 	}
 
 	if _, err := tmp.Write(data); err != nil {
@@ -37,11 +37,11 @@ func writeFileAtomic(filename string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("unable to sync temporary file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("unable to close temporary file: %w", err)
 	}
 	if err := os.Rename(tmpName, filename); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("unable to replace network file: %w", err)
 	}
 
@@ -129,7 +129,7 @@ func (t *NetemTopologyManager) Save(progressCh chan TopologySaveProgressT) error
 	// create config folder if not exist
 	destPath := path.Join(t.path, configDir)
 	if _, err := os.Stat(destPath); os.IsNotExist(err) {
-		if err := os.Mkdir(destPath, 0755); err != nil {
+		if err := os.Mkdir(destPath, 0750); err != nil {
 			return fmt.Errorf("unable to create configs dir %s: %w", destPath, err)
 		}
 	}

@@ -105,7 +105,7 @@ func CreateNetns(name string) (netns.NsHandle, error) {
 		return netns.None(), err
 	}
 	if restoreErr != nil {
-		ns.Close()
+		_ = ns.Close()
 		return netns.None(), fmt.Errorf("unable to restore original netns: %w", restoreErr)
 	}
 

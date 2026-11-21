@@ -89,10 +89,10 @@ func (n *DockerNode) Start() error {
 		}
 
 		if targetNS != 0 {
-			targetNS.Close()
+			_ = targetNS.Close()
 		}
 		if currentNS != 0 {
-			currentNS.Close()
+			_ = currentNS.Close()
 		}
 	}()
 

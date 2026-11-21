@@ -71,7 +71,7 @@ Everything else falls back to defaults.
 Complete reference
 ~~~~~~~~~~~~~~~~~~
 
-Below is the full configuration accepted by version 0.8.0. It mirrors the
+Below is the full configuration accepted by version 0.9.0. It mirrors the
 built-in defaults; the comments explain each key.
 
 .. code-block:: yaml
