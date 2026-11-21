@@ -21,7 +21,7 @@ func TestOVS_Instance(t *testing.T) {
 		return
 	}
 
-	instance, err := NewOvsInstance(prjID)
+	instance, err := newOvsInstanceForTest(prjID)
 	if err != nil {
 		t.Errorf("Unable to create ovs instance: %v", err)
 		return

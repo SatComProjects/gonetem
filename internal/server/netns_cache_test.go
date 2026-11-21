@@ -9,7 +9,7 @@ import (
 )
 
 type fakeNetnsNode struct {
-	fakeStartNode
+	fakeIdentity
 	handle netns.NsHandle
 	calls  atomic.Int32
 }
@@ -26,8 +26,8 @@ func TestNodeNetnsCacheCollapsesConcurrentLookups(t *testing.T) {
 	}
 
 	node := &fakeNetnsNode{
-		fakeStartNode: fakeStartNode{name: "R1"},
-		handle:        handle,
+		fakeIdentity: fakeIdentity{name: "R1"},
+		handle:       handle,
 	}
 	cache := newNodeNetnsCache()
 	defer cache.closeAll()

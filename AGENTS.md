@@ -165,8 +165,8 @@ Additional rules:
 
 - Define interfaces where they are consumed, not where they are implemented
   unless the abstraction is genuinely shared.
-- Do not grow `INetemNode` further. New consumers should declare the narrow
-  behaviour they need (see refactor phase 2).
+- Do not grow the `Node` composite further. New consumers declare the narrow
+  role they need in `internal/server/node_roles.go` or their own package.
 - Do not add package-level mutable state. Pass configuration and collaborators
   explicitly; composition belongs in `cmd/`.
 - Protobuf types stay at the transport boundary; convert to domain types before

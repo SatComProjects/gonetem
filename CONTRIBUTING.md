@@ -74,7 +74,7 @@ back. Tests must never be weakened, deleted or skipped to make a build green.
 - One reason to change per type or package; split orchestration, domain policy
   and I/O adapters.
 - Interfaces are defined by consumers and kept narrow. Do not extend the
-  `INetemNode` god interface.
+  `Node` composite; use or add a role interface.
 - Dependencies point inward. See the dependency rules in `AGENTS.md` and
   `.golangci.yml`; `depguard` enforces them in CI.
 - Configuration and collaborators are injected at the composition root

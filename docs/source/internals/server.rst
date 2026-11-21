@@ -51,12 +51,15 @@ field:
 
    type netemServer struct {
        proto.UnimplementedNetemServer
-       routeApplier func(context.Context, INetemNode, []link.RouteSpec) (int, error)
+       routeApplier func(context.Context, RouteNode, []link.RouteSpec) (int, error)
+       dockerClient docker.ContainerAPI
    }
 
 ``routeApplier`` is a test seam for ``RouteInstall``; production uses
-``applyRoutesToNode``. Similar seams exist inside the topology manager for qdisc
-batches (``qosBatchApplier``).
+``applyRoutesToNode``. ``dockerClient`` is injected by ``NewServer`` and is used
+by the image-pull and container-clean handlers; bare test servers fall back to
+the shared client. Similar seams exist inside the topology manager for qdisc
+batches (``qosBatchApplier``) and node creation (``nodeFactory``/``ovsFactory``).
 
 Handlers are thin by design. They:
 

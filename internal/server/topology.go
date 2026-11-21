@@ -342,7 +342,7 @@ type NetemTopology struct {
 }
 
 type NetemLinkPeer struct {
-	Node    INetemNode
+	Node    LinkNode
 	IfIndex int
 }
 
@@ -459,7 +459,7 @@ func splitPeer(peer string) (string, int, error) {
 }
 
 type NetemNode struct {
-	Instance        INetemNode
+	Instance        Node
 	LaunchAtStartup bool
 	Config          NodeConfig
 }
@@ -474,7 +474,7 @@ func newNodeNetnsCache() *nodeNetnsCache {
 	return &nodeNetnsCache{handles: make(map[string]netns.NsHandle)}
 }
 
-func (c *nodeNetnsCache) get(node INetemNode) (netns.NsHandle, error) {
+func (c *nodeNetnsCache) get(node NodeNetns) (netns.NsHandle, error) {
 	name := node.GetName()
 
 	c.mu.Lock()
@@ -549,19 +549,24 @@ type NetemTopologyManager struct {
 	updateBatchMu sync.Mutex
 	// qosBatchApplier is injectable for tests. Production uses link.ApplyQoSBatch.
 	qosBatchApplier func(netns.NsHandle, []link.QoSOperation) ([]link.QoSOperationResult, error)
-	// nodeFactory is injectable for tests. Production uses CreateNode.
-	nodeFactory func(prjID, name, shortName string, config NodeConfig) (INetemNode, error)
+	// nodeFactory is injectable for tests. Production uses NodeFactory.
+	nodeFactory func(prjID, name, shortName string, config NodeConfig) (Node, error)
+	ovsFactory  func(prjID string) (*ovs.OvsProjectInstance, error)
 	syncMu      sync.Mutex
 	lastSynced  []byte
 }
 
 // createNode builds a node through the injected factory when one is set.
 // Tests use this seam to exercise topology loading without Docker or root.
-func (t *NetemTopologyManager) createNode(name, shortName string, config NodeConfig) (INetemNode, error) {
+func (t *NetemTopologyManager) createNode(name, shortName string, config NodeConfig) (Node, error) {
 	if t.nodeFactory != nil {
 		return t.nodeFactory(t.prjID, name, shortName, config)
 	}
-	return CreateNode(t.prjID, name, shortName, config)
+	factory, err := NewNodeFactory()
+	if err != nil {
+		return nil, err
+	}
+	return factory.Create(t.prjID, name, shortName, config)
 }
 
 func (t *NetemTopologyManager) Check() error {
@@ -851,7 +856,15 @@ func (t *NetemTopologyManager) Load() error {
 
 func (t *NetemTopologyManager) ensureOvsInstance(start bool) error {
 	if t.ovsInstance == nil {
-		instance, err := ovs.NewOvsInstance(t.prjID)
+		factory := t.ovsFactory
+		if factory == nil {
+			nodeFactory, err := NewNodeFactory()
+			if err != nil {
+				return err
+			}
+			factory = nodeFactory.CreateOvsInstance
+		}
+		instance, err := factory(t.prjID)
 		if err != nil {
 			return err
 		}
@@ -1851,7 +1864,7 @@ func deleteNodeLinks(
 ) error {
 	if running {
 		type deleteBatch struct {
-			node  INetemNode
+			node  LinkNode
 			names []string
 		}
 		batches := make(map[string]*deleteBatch)
@@ -2055,11 +2068,22 @@ func (t *NetemTopologyManager) WriteNetworkFile(data []byte) error {
 	return nil
 }
 
-func (t *NetemTopologyManager) GetAllNodes() []INetemNode {
+func (t *NetemTopologyManager) GetAllNodeStatuses() []NodeStatus {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	nodeInstances := make([]INetemNode, len(t.nodes))
+	statuses := make([]NodeStatus, len(t.nodes))
+	for idx, node := range t.nodes {
+		statuses[idx] = node.Instance
+	}
+	return statuses
+}
+
+func (t *NetemTopologyManager) GetAllNodes() []Node {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	nodeInstances := make([]Node, len(t.nodes))
 	for i := range t.nodes {
 		nodeInstances[i] = t.nodes[i].Instance
 	}
@@ -2078,13 +2102,13 @@ func (t *NetemTopologyManager) IsNodeLaunchAtStartup(name string) bool {
 	return false
 }
 
-func (t *NetemTopologyManager) GetNode(name string) INetemNode {
+func (t *NetemTopologyManager) GetNode(name string) Node {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.getNodeLocked(name)
 }
 
-func (t *NetemTopologyManager) getNodeLocked(name string) INetemNode {
+func (t *NetemTopologyManager) getNodeLocked(name string) Node {
 	for _, node := range t.nodes {
 		if node.Instance.GetName() == name {
 			return node.Instance
@@ -2093,7 +2117,7 @@ func (t *NetemTopologyManager) getNodeLocked(name string) INetemNode {
 	return nil
 }
 
-func (t *NetemTopologyManager) startNode(node INetemNode) ([]string, error) {
+func (t *NetemTopologyManager) startNode(node StartableNode) ([]string, error) {
 	if err := node.Start(); err != nil {
 		return []string{}, fmt.Errorf("unable to start node %s: %w", node.GetName(), err)
 	}
@@ -2112,7 +2136,7 @@ func (t *NetemTopologyManager) startNode(node INetemNode) ([]string, error) {
 	return messages, nil
 }
 
-func (t *NetemTopologyManager) stopNode(node INetemNode) error {
+func (t *NetemTopologyManager) stopNode(node StopableNode) error {
 	if err := node.Stop(); err != nil {
 		return fmt.Errorf("unable to stop node %s: %w", node.GetName(), err)
 	}
@@ -2217,7 +2241,7 @@ func (t *NetemTopologyManager) Close(progressCh chan TopologyRunCloseProgressT) 
 
 // nodeDestroysNetnsOnClose reports whether closing a node also removes the
 // network namespace that owns its link interfaces.
-func nodeDestroysNetnsOnClose(node INetemNode) bool {
+func nodeDestroysNetnsOnClose(node NodeIdentity) bool {
 	switch node.GetType() {
 	case "docker", "namespace":
 		return true
@@ -2344,11 +2368,18 @@ func (t *NetemTopologyManager) closeLocked(progressCh chan TopologyRunCloseProgr
 }
 
 func LoadTopology(prjID, prjPath string) (*NetemTopologyManager, error) {
+	factory, err := NewNodeFactory()
+	if err != nil {
+		return nil, err
+	}
+
 	topo := &NetemTopologyManager{
-		prjID:  prjID,
-		path:   prjPath,
-		nodes:  make([]NetemNode, 0),
-		logger: logrus.WithField("project", prjID),
+		prjID:       prjID,
+		path:        prjPath,
+		nodes:       make([]NetemNode, 0),
+		logger:      logrus.WithField("project", prjID),
+		nodeFactory: factory.Create,
+		ovsFactory:  factory.CreateOvsInstance,
 		IdGenerator: &NodeIdentifierGenerator{
 			lock: &sync.Mutex{},
 		},

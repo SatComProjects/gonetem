@@ -72,7 +72,7 @@ func (s *copyFromStreamStub) Context() context.Context     { return context.Back
 func (s *copyFromStreamStub) SendMsg(any) error            { return nil }
 func (s *copyFromStreamStub) RecvMsg(any) error            { return nil }
 
-func registerCopyProject(t *testing.T, node INetemNode) string {
+func registerCopyProject(t *testing.T, node Node) string {
 	t.Helper()
 
 	prjID := "copytest"

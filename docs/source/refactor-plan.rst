@@ -131,8 +131,9 @@ Design rules:
 * **Liskov substitution.** Every node implementation honours the same lifecycle
   and error contract; contract tests apply to Docker, namespace and OVS nodes.
 * **Interface segregation.** Consumers declare the small interface they need.
-  ``INetemNode`` (26 methods) is split into lifecycle, network, execution,
-  console, persistence and state roles.
+  The former ``INetemNode`` is split into lifecycle, network, execution,
+  console, persistence and state roles; the topology engine keeps the
+  composite where it genuinely needs the union.
 * **Dependency inversion.** Policy depends on consumer-owned interfaces;
   Docker, netlink, ``nsenter``, OVS and filesystem access are adapters.
 * **Explicit composition.** Configuration and collaborators are passed from
@@ -386,6 +387,14 @@ by fakes.
 Phase 2 - Interface segregation and dependency inversion
 --------------------------------------------------------
 
+**Status: complete (2026-11-21).** Delivered the role interfaces in
+``internal/server/node_roles.go`` (topology composite kept at the manager
+boundary), narrow handler/link/route/netns/lifecycle consumers, the Docker API
+roles in ``internal/docker/api.go``, injected clients in ``DockerNode`` and
+``OvsProjectInstance``, ``NodeFactory``/``ovsFactory`` wiring,
+``netemServer.dockerClient`` injection, and a shared node contract test for the
+Docker, namespace and OVS implementations. The old ``INetemNode`` name is gone.
+
 **Goal.** Consumers depend on the smallest behaviour they use; adapters are
 constructed at the edge.
 
@@ -410,8 +419,9 @@ constructed at the edge.
 
 **Exit criteria.**
 
-* No production consumer references the full ``INetemNode`` surface unless it
-  is a factory/composite boundary.
+* No production consumer references the full ``Node`` composite unless it is a
+  factory/topology boundary; handlers, links, routes and lifecycle operations
+  use narrow roles.
 * No adapter calls ``NewDockerClient`` or another hidden constructor; the
   composition root injects it.
 * ``depguard`` remains green and its rules match the documented direction.
@@ -797,8 +807,8 @@ Phase status
      - testutil capability helpers, hermetic project/topology tests, node
        factory, link characterization, coverage ratchet.
    * - 2
-     - Planned
-     - Role interfaces and adapter injection.
+     - Complete (2026-11-21)
+     - Role interfaces, Docker API injection, NodeFactory, contract tests.
    * - 3
      - Planned
      - Link/QoS split.

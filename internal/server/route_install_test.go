@@ -12,7 +12,7 @@ import (
 	"github.com/satcomprojects/gonetem/internal/proto"
 )
 
-func registerRouteProject(t *testing.T, nodes ...INetemNode) string {
+func registerRouteProject(t *testing.T, nodes ...Node) string {
 	t.Helper()
 
 	prjID := "routetest"
@@ -91,7 +91,7 @@ func TestRouteInstallAppliesBatchesWithBoundedConcurrency(t *testing.T) {
 	)
 
 	var active, maxActive atomic.Int32
-	apply := func(_ context.Context, node INetemNode, specs []link.RouteSpec) (int, error) {
+	apply := func(_ context.Context, node RouteNode, specs []link.RouteSpec) (int, error) {
 		current := active.Add(1)
 		for {
 			observed := maxActive.Load()
@@ -144,7 +144,7 @@ func TestRouteInstallReportsMissingNodeWithoutAborting(t *testing.T) {
 	prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
 
 	called := 0
-	apply := func(_ context.Context, _ INetemNode, specs []link.RouteSpec) (int, error) {
+	apply := func(_ context.Context, _ RouteNode, specs []link.RouteSpec) (int, error) {
 		called++
 		return len(specs), nil
 	}
@@ -174,7 +174,7 @@ func TestRouteInstallRejectsInvalidSpecBeforeApplying(t *testing.T) {
 	prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
 
 	called := false
-	apply := func(_ context.Context, _ INetemNode, _ []link.RouteSpec) (int, error) {
+	apply := func(_ context.Context, _ RouteNode, _ []link.RouteSpec) (int, error) {
 		called = true
 		return 0, nil
 	}
@@ -200,7 +200,7 @@ func TestRouteInstallHonorsCanceledContext(t *testing.T) {
 	prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
 
 	called := false
-	apply := func(_ context.Context, _ INetemNode, _ []link.RouteSpec) (int, error) {
+	apply := func(_ context.Context, _ RouteNode, _ []link.RouteSpec) (int, error) {
 		called = true
 		return 0, nil
 	}

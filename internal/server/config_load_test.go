@@ -2,8 +2,17 @@ package server
 
 import "testing"
 
+type fakeIdentity struct {
+	name string
+}
+
+func (n *fakeIdentity) GetName() string      { return n.name }
+func (n *fakeIdentity) GetShortName() string { return n.name }
+func (n *fakeIdentity) GetType() string      { return "fake" }
+func (n *fakeIdentity) GetFullType() string  { return "fake" }
+
 type fakeStartNode struct {
-	INetemNode
+	Node
 	name       string
 	configured bool
 	loaded     bool

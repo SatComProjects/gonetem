@@ -32,7 +32,9 @@ Data structures
        linkIndex   map[linkKey]*NetemLink  // unordered peer pair -> link
        pendingLinks map[linkKey]struct{}   // keys being added/deleted
        updateBatchMu sync.Mutex            // serialises LinkUpdateMany batches
-       qosBatchApplier func(...)           // test seam
+       qosBatchApplier func(...)           // qdisc test seam
+       nodeFactory func(...) (Node, error) // Docker/namespace/OVS factory seam
+       ovsFactory  func(prjID) (*ovs.OvsProjectInstance, error)
        syncMu     sync.Mutex
        lastSynced []byte     // last content written to network.yml
    }
@@ -42,9 +44,11 @@ currently installed (``HasPeer1Tbf``, ``HasPeer1Netem``, …). The flags avoid
 guessing the kernel state when a QoS change only needs a ``change`` instead of
 a full reset.
 
-``NetemLinkPeer`` is ``{Node INetemNode, IfIndex int}``. The interface name is
-derived from the node (``eth<index>`` for containers/namespaces,
-``<switch>.<index>`` for OVS).
+``NetemLinkPeer`` is ``{Node LinkNode, IfIndex int}``. ``LinkNode`` is the
+identity + netns + interface subset declared by the server package; the
+topology manager still holds the wider ``Node`` composite for lifecycle work.
+The interface name is derived from the node (``eth<index>`` for
+containers/namespaces, ``<switch>.<index>`` for OVS).
 
 Loading
 -------
@@ -58,8 +62,8 @@ Loading
    **not** created here: it is created lazily by ``Run`` or by the first
    ``NodeAdd`` of an OVS node. ``ovsInstance`` is reset to ``nil``.
 #. **Nodes** are created concurrently (``createConcurrency``). For each node
-   the identifier generator produces a short name; ``CreateNode`` instantiates
-   the right implementation. Docker nodes are created immediately unless
+   the identifier generator produces a short name; the injected
+   ``NodeFactory.Create`` instantiates the right implementation. Docker nodes are created immediately unless
    ``launch`` is false (lazy creation). A failure aborts the load; nodes
    already created are closed by the caller (``ProjectOpen`` closes the
    topology and removes the directory).
@@ -157,7 +161,7 @@ Node add
    as the file parser;
 #. allocate a short name; for an OVS node, ensure the OVS instance exists (and
    start it if the topology is running);
-#. ``CreateNode`` (container created immediately unless lazy);
+#. ``NodeFactory.Create`` (container created immediately unless lazy);
 #. append to the model;
 #. if the topology is running: start the node when ``launch`` is true, then
    create its management link when requested;

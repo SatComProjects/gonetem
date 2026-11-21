@@ -11,8 +11,12 @@ import (
 )
 
 type fakeQoSNode struct {
-	fakeStartNode
+	fakeIdentity
 }
+
+func (n *fakeQoSNode) AttachInterface(string, int, bool) error                  { return nil }
+func (n *fakeQoSNode) DetachInterface(string) error                             { return nil }
+func (n *fakeQoSNode) AttachMgntInterface(string, netns.NsHandle, string) error { return nil }
 
 func (n *fakeQoSNode) GetNetns() (netns.NsHandle, error) {
 	return netns.Get()
@@ -30,9 +34,9 @@ func newQoSTestLink(peer1, peer2 *fakeQoSNode) *NetemLink {
 }
 
 func TestLinkUpdateManyGroupsQoSByNode(t *testing.T) {
-	nodeA := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "A"}}
-	nodeB := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "B"}}
-	nodeC := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "C"}}
+	nodeA := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "A"}}
+	nodeB := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "B"}}
+	nodeC := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "C"}}
 	linkAB := newQoSTestLink(nodeA, nodeB)
 	linkAC := newQoSTestLink(nodeA, nodeC)
 
@@ -85,8 +89,8 @@ func TestLinkUpdateManyGroupsQoSByNode(t *testing.T) {
 }
 
 func TestLinkUpdateManyStoppedTopologyUpdatesConfig(t *testing.T) {
-	nodeA := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "A"}}
-	nodeB := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "B"}}
+	nodeA := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "A"}}
+	nodeB := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "B"}}
 	linkAB := newQoSTestLink(nodeA, nodeB)
 	manager := &NetemTopologyManager{links: []*NetemLink{linkAB}}
 
@@ -105,8 +109,8 @@ func TestLinkUpdateManyStoppedTopologyUpdatesConfig(t *testing.T) {
 }
 
 func TestLinkUpdateManyIsolatesPerLinkErrors(t *testing.T) {
-	nodeA := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "A"}}
-	nodeB := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "B"}}
+	nodeA := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "A"}}
+	nodeB := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "B"}}
 	linkAB := newQoSTestLink(nodeA, nodeB)
 	manager := &NetemTopologyManager{links: []*NetemLink{linkAB}}
 
@@ -137,8 +141,8 @@ func TestLinkUpdateManyIsolatesPerLinkErrors(t *testing.T) {
 }
 
 func TestLinkUpdateManyHandlerReportsPerLinkError(t *testing.T) {
-	nodeA := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "A"}}
-	nodeB := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "B"}}
+	nodeA := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "A"}}
+	nodeB := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "B"}}
 	manager := &NetemTopologyManager{links: []*NetemLink{newQoSTestLink(nodeA, nodeB)}}
 
 	prjID := "linkupdatetesterr"
@@ -173,8 +177,8 @@ func TestLinkUpdateManyHandlerReportsPerLinkError(t *testing.T) {
 }
 
 func TestLinkUpdateManyHandlerReportsUpdatedCount(t *testing.T) {
-	nodeA := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "A"}}
-	nodeB := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "B"}}
+	nodeA := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "A"}}
+	nodeB := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "B"}}
 	manager := &NetemTopologyManager{links: []*NetemLink{newQoSTestLink(nodeA, nodeB)}}
 
 	prjID := "linkupdatetest"

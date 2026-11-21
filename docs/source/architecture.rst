@@ -127,7 +127,7 @@ Data model
      + locks and indexes
 
    NetemNode                         NetemLink
-     Instance INetemNode               Peer1/Peer2 {Node, IfIndex}
+     Instance Node                     Peer1/Peer2 {Node LinkNode, IfIndex}
      LaunchAtStartup bool              Config LinkConfig
      Config NodeConfig                 HasPeerNTbf / HasPeerNNetem flags
 
@@ -135,19 +135,17 @@ Data model
      Name, ConfigName                  NetId, IPAddress
      HostInterface, Peers, Config      Interfaces, netns
 
-   INetemNode (interface, server/node.go)
+   Node roles (server/node_roles.go)
+     Node = identity + lifecycle + network + exec + persistence
+     LinkNode / NodeNetns / RouteNode / StartableNode / StopableNode / NodeStatus
      implemented by *docker.DockerNode, *ovs.OvsNode, *namespace.NamespaceNode
-     lifecycle: Start/Stop/Kill/Close
-     namespace: GetNetns
-     interfaces: Attach/Detach/Configure/SetState/GetInterfacesState
-     config: LoadConfig/Save/ReadConfigFiles
-     interaction: ExecCommand/RunCommand/GetConsoleCmd/Capture
-     files: CopyFrom/CopyTo
 
-The ``INetemNode`` interface is the central abstraction: the topology manager
-never knows whether it is driving a container, a switch or a namespace. Adding
-a new node family means implementing this interface (or reusing the Docker node
-with a new image and type definition).
+The topology engine holds the ``Node`` composite, while links, route
+installation, start/stop and transport handlers accept the narrow role they
+need. The topology manager never knows whether it is driving a container, a
+switch or a namespace. Adding a new node family means implementing the roles
+and registering it in ``NodeFactory`` (or reusing the Docker node with a new
+image and type definition).
 
 Topology model invariants
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -379,10 +377,10 @@ Extension points
    * - New device family with an existing image
      - Add a ``docker.extraNodes`` entry; no code change.
    * - New device family with new behaviour
-     - Implement ``INetemNode`` and add it to ``CreateNode``.
+     - Implement the node roles and add the type to ``NodeFactory.Create``.
    * - New node/session option
      - Extend ``NodeConfig`` (YAML) and ``NodeConfigMsg`` (proto) and plumb it
-       through ``getNodeConfigFromRequest``/``CreateNode``.
+       through ``getNodeConfigFromRequest``/``NodeFactory.Create``.
    * - New API operation
      - Add the RPC and messages to ``netem.proto``, regenerate stubs, implement
        the handler in ``internal/server``.

@@ -84,7 +84,17 @@ func getNodeConfigFromRequest(request *proto.NodeAddRequest) NodeConfig {
 type netemServer struct {
 	proto.UnimplementedNetemServer
 	// routeApplier is injectable for tests. Production uses applyRoutesToNode.
-	routeApplier func(context.Context, INetemNode, []link.RouteSpec) (int, error)
+	routeApplier func(context.Context, RouteNode, []link.RouteSpec) (int, error)
+	// dockerClient is injectable at the composition root. The fallback keeps
+	// bare test servers usable.
+	dockerClient docker.ContainerAPI
+}
+
+func (s *netemServer) getDockerClient() (docker.ContainerAPI, error) {
+	if s.dockerClient != nil {
+		return s.dockerClient, nil
+	}
+	return docker.NewDockerClient()
 }
 
 func (s *netemServer) ServerGetVersion(ctx context.Context, empty *empty.Empty) (*proto.VersionResponse, error) {
@@ -97,11 +107,10 @@ func (s *netemServer) ServerGetVersion(ctx context.Context, empty *empty.Empty) 
 }
 
 func (s *netemServer) ServerCleanContainers(ctx context.Context, empty *empty.Empty) (*proto.AckResponse, error) {
-	client, err := docker.NewDockerClient()
+	client, err := s.getDockerClient()
 	if err != nil {
 		return nil, fmt.Errorf("unable to init docker client: %w", err)
 	}
-	defer client.Close()
 
 	cList, err := client.List(context.Background(), options.NETEM_ID)
 	if err != nil {
@@ -174,11 +183,10 @@ func imageTypesForPull() []string {
 func (s *netemServer) ServerPullImages(empty *empty.Empty, stream proto.Netem_ServerPullImagesServer) error {
 	imageTypes := imageTypesForPull()
 
-	client, err := docker.NewDockerClient()
+	client, err := s.getDockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	ctx := context.Background()
 	for _, imgT := range imageTypes {
@@ -447,7 +455,7 @@ func (s *netemServer) ProjectGetStatus(ctx context.Context, request *proto.Proje
 		Running: project.Topology.IsRunning(),
 	}
 
-	for _, node := range project.Topology.GetAllNodes() {
+	for _, node := range project.Topology.GetAllNodeStatuses() {
 		nodeStatus := &proto.StatusResponse_NodeStatus{
 			Name:    node.GetName(),
 			Running: node.IsRunning(),
@@ -977,8 +985,8 @@ func (s *netemServer) NodeSetIfState(ctx context.Context, request *proto.NodeIfS
 		return nil, &ProjectNotFoundError{request.GetPrjId()}
 	}
 
-	node := project.Topology.GetNode(request.GetNode())
-	if node == nil {
+	stateNode := InterfaceStateNode(project.Topology.GetNode(request.GetNode()))
+	if stateNode == nil {
 		return nil, &NodeNotFoundError{request.GetPrjId(), request.GetNode()}
 	}
 
@@ -992,7 +1000,7 @@ func (s *netemServer) NodeSetIfState(ctx context.Context, request *proto.NodeIfS
 		return nil, fmt.Errorf("invalid interface state %d", request.GetState())
 	}
 
-	if err := node.SetInterfaceState(int(request.GetIfIndex()), state); err != nil {
+	if err := stateNode.SetInterfaceState(int(request.GetIfIndex()), state); err != nil {
 		return nil, err
 	}
 
@@ -1010,8 +1018,8 @@ func (s *netemServer) NodeCapture(request *proto.NodeInterfaceRequest, stream pr
 		})
 	}
 
-	node := project.Topology.GetNode(request.GetNode())
-	if node == nil {
+	captureNode := CaptureNode(project.Topology.GetNode(request.GetNode()))
+	if captureNode == nil {
 		return stream.Send(&proto.CaptureSrvMsg{
 			Code: proto.CaptureSrvMsg_ERROR,
 			Data: []byte(fmt.Sprintf("Node %s not found", request.GetNode())),
@@ -1026,7 +1034,7 @@ func (s *netemServer) NodeCapture(request *proto.NodeInterfaceRequest, stream pr
 
 	logger := logrus.WithFields(logrus.Fields{
 		"project": project.Id,
-		"node":    node.GetName(),
+		"node":    captureNode.GetName(),
 	})
 
 	rOut, wOut := io.Pipe()
@@ -1062,7 +1070,7 @@ func (s *netemServer) NodeCapture(request *proto.NodeInterfaceRequest, stream pr
 	}()
 
 	logger.Debugf("Start capture on interface %d", request.IfIndex)
-	if err := node.Capture(stream.Context(), int(request.GetIfIndex()), wOut); err != nil {
+	if err := captureNode.Capture(stream.Context(), int(request.GetIfIndex()), wOut); err != nil {
 		if sendErr := stream.Send(&proto.CaptureSrvMsg{
 			Code: proto.CaptureSrvMsg_ERROR,
 			Data: []byte(err.Error()),
@@ -1137,8 +1145,8 @@ func (s *netemServer) NodeExec(stream proto.Netem_NodeExecServer) error {
 	}
 
 	// get node
-	node := project.Topology.GetNode(msg.GetNode())
-	if node == nil {
+	execNode := ExecNode(project.Topology.GetNode(msg.GetNode()))
+	if execNode == nil {
 		return stream.Send(&proto.ExecSrvMsg{
 			Code: proto.ExecSrvMsg_ERROR,
 			Data: []byte(fmt.Sprintf("Node %s not found in project %s", msg.GetNode(), msg.GetPrjId())),
@@ -1147,7 +1155,7 @@ func (s *netemServer) NodeExec(stream proto.Netem_NodeExecServer) error {
 
 	logger := logrus.WithFields(logrus.Fields{
 		"project": project.Id,
-		"node":    node.GetName(),
+		"node":    execNode.GetName(),
 	})
 	logger.Debug("Start Exec stream")
 
@@ -1219,7 +1227,7 @@ func (s *netemServer) NodeExec(stream proto.Netem_NodeExecServer) error {
 		}
 	})
 
-	err = node.ExecCommand(
+	err = execNode.ExecCommand(
 		ctx, msg.GetCmd(), rIn, wOut,
 		msg.GetTty(), uint(msg.GetTtyHeight()), uint(msg.GetTtyWidth()),
 		resizeCh)
@@ -1254,15 +1262,15 @@ func (s *netemServer) NodeGetConsoleCmd(ctx context.Context, request *proto.Cons
 	}
 
 	// get node
-	node := project.Topology.GetNode(request.GetNode())
-	if node == nil {
+	consoleNode := ConsoleNode(project.Topology.GetNode(request.GetNode()))
+	if consoleNode == nil {
 		return nil, &NodeNotFoundError{
 			prjId: request.GetPrjId(),
 			name:  request.GetNode(),
 		}
 	}
 
-	cmd, err := node.GetConsoleCmd(request.GetShell())
+	cmd, err := consoleNode.GetConsoleCmd(request.GetShell())
 	if err != nil {
 		return nil, err
 	}
@@ -1280,15 +1288,15 @@ func (s *netemServer) NodeRun(ctx context.Context, request *proto.NodeRunRequest
 	}
 
 	// get node
-	node := project.Topology.GetNode(request.GetNode())
-	if node == nil {
+	runNode := RunNode(project.Topology.GetNode(request.GetNode()))
+	if runNode == nil {
 		return nil, &NodeNotFoundError{
 			prjId: request.GetPrjId(),
 			name:  request.GetNode(),
 		}
 	}
 
-	stdout, stderr, exitCode, err := node.RunCommand(request.GetCmd())
+	stdout, stderr, exitCode, err := runNode.RunCommand(request.GetCmd())
 	if err != nil {
 		return &proto.NodeRunResponse{
 			Status: &proto.Status{
@@ -1317,8 +1325,8 @@ func (s *netemServer) NodeCopyFrom(request *proto.CopyMsg, stream proto.Netem_No
 	}
 
 	// get node
-	node := project.Topology.GetNode(request.GetNode())
-	if node == nil {
+	copyNode := CopyNode(project.Topology.GetNode(request.GetNode()))
+	if copyNode == nil {
 		return stream.Send(&proto.CopyMsg{
 			Code: proto.CopyMsg_ERROR,
 			Data: []byte(fmt.Sprintf("Node %s not found in project %s", request.GetNode(), request.GetPrjId())),
@@ -1338,7 +1346,7 @@ func (s *netemServer) NodeCopyFrom(request *proto.CopyMsg, stream proto.Netem_No
 	}
 	tempPath := path.Join(tmpDir, fileName)
 
-	if err := node.CopyFrom(request.GetNodePath(), tempPath); err != nil {
+	if err := copyNode.CopyFrom(request.GetNodePath(), tempPath); err != nil {
 		return err
 	}
 
@@ -1372,7 +1380,7 @@ func (s *netemServer) NodeCopyFrom(request *proto.CopyMsg, stream proto.Netem_No
 func (s *netemServer) NodeCopyTo(stream proto.Netem_NodeCopyToServer) error {
 	var tempDir, tempPath, destPath string
 	var tempFile *os.File
-	var node INetemNode
+	var node CopyNode
 
 	defer func() {
 		if tempFile != nil {
@@ -1518,5 +1526,9 @@ func (s *netemServer) Close() error {
 }
 
 func NewServer() *netemServer {
-	return &netemServer{}
+	client, err := docker.NewDockerClient()
+	if err != nil {
+		logrus.Errorf("unable to initialize Docker client: %v", err)
+	}
+	return &netemServer{dockerClient: client}
 }
