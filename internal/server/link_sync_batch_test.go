@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/proto"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
 )
@@ -293,16 +293,9 @@ func TestLinkSyncManyHandlerReportsCountsAndOrder(t *testing.T) {
 	addTestLink(t, manager, "A.0", "B.0")
 
 	prjID := "linksyncmanyhandler"
-	projectsMu.Lock()
-	openProjects[prjID] = &NetemProject{Id: prjID, Name: prjID, Topology: manager}
-	projectsMu.Unlock()
-	t.Cleanup(func() {
-		projectsMu.Lock()
-		delete(openProjects, prjID)
-		projectsMu.Unlock()
-	})
+	server := testServerWithProject(t, &NetemProject{Id: prjID, Name: prjID, Topology: manager})
 
-	response, err := (&netemServer{}).LinkSyncMany(context.Background(), &proto.LinkSyncManyRequest{
+	response, err := server.LinkSyncMany(context.Background(), &proto.LinkSyncManyRequest{
 		PrjId: prjID,
 		Operations: []*proto.LinkSyncOperation{
 			{Action: proto.LinkSyncAction_LINK_SYNC_DEL, Link: &proto.LinkConfig{Peer1: "A.0", Peer2: "B.0"}},

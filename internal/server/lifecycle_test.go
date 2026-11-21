@@ -4,7 +4,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/options"
 	"github.com/sirupsen/logrus"
 )
 
@@ -29,19 +28,13 @@ func TestProgressBatcherAggregatesEvents(t *testing.T) {
 }
 
 func TestConcurrencyLimitsAreConfigurable(t *testing.T) {
-	options.InitServerConfig()
-	previous := options.ServerConfig.Docker.LinkConcurrency
-	t.Cleanup(func() {
-		options.ServerConfig.Docker.LinkConcurrency = previous
-	})
-
-	options.ServerConfig.Docker.LinkConcurrency = 7
-	if got := linkCreateLimit(); got != 7 {
-		t.Fatalf("linkCreateLimit() = %d, expected 7", got)
+	manager := &NetemTopologyManager{config: Config{LinkConcurrency: 7}}
+	if got := manager.linkLimit(); got != 7 {
+		t.Fatalf("linkLimit() = %d, expected 7", got)
 	}
 
-	options.ServerConfig.Docker.LinkConcurrency = 0
-	if got := linkCreateLimit(); got != maxConcurrentNodeTask {
+	manager.config.LinkConcurrency = 0
+	if got := manager.linkLimit(); got != maxConcurrentNodeTask {
 		t.Fatalf("zero concurrency should use the fallback, got %d", got)
 	}
 }

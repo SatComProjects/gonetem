@@ -10,8 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/testutil"
+	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 type DockerImageT int
@@ -50,10 +51,11 @@ func setupClient(t *testing.T) (*DockerClient, func()) {
 
 func setupContainer(t *testing.T, imgId DockerImageT) (*DockerClient, string, string, func()) {
 	options.InitServerConfig()
+	image := getImageFromT(imgId)
+	testutil.RequireImage(t, image)
 	client, _ := NewDockerClient()
 
 	ctx := context.Background()
-	image := getImageFromT(imgId)
 	name := utils.RandString(10)
 
 	cID, err := client.Create(ctx, image, name, name, []string{}, true, true)
@@ -109,6 +111,8 @@ func TestNewDockerClientIsShared(t *testing.T) {
 }
 
 func TestDockerClient_ImagePresent(t *testing.T) {
+	options.InitServerConfig()
+	testutil.RequireImage(t, getImageFromT(IMG_OVS))
 	client, teardown := setupClient(t)
 	defer teardown()
 
@@ -170,6 +174,7 @@ func TestImagePresentCachedCollapsesLookups(t *testing.T) {
 }
 
 func TestDockerClient_RmMissingIsNoop(t *testing.T) {
+	testutil.RequireDocker(t)
 	client, teardown := setupClient(t)
 	defer teardown()
 
@@ -179,6 +184,8 @@ func TestDockerClient_RmMissingIsNoop(t *testing.T) {
 }
 
 func TestDockerClient_CreateRm(t *testing.T) {
+	testutil.RequireRoot(t)
+	testutil.RequireMPLS(t)
 	client, cID, _, teardown := setupContainer(t, IMG_HOST)
 	defer teardown()
 
@@ -214,6 +221,8 @@ func TestDockerClient_CreateRm(t *testing.T) {
 }
 
 func TestDockerClient_Exec(t *testing.T) {
+	testutil.RequireRoot(t)
+	testutil.RequireMPLS(t)
 	client, cID, name, teardown := setupStartedContainer(t, IMG_SERVER)
 	defer teardown()
 
@@ -264,6 +273,8 @@ func TestDockerClient_Copy(t *testing.T) {
 }
 
 func TestDockerClient_Pid(t *testing.T) {
+	testutil.RequireRoot(t)
+	testutil.RequireMPLS(t)
 	client, cID, _, teardown := setupContainer(t, IMG_ROUTER)
 	defer teardown()
 

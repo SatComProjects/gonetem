@@ -1,0 +1,140 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+# Phase 0 gate: correctness, naming and dependency-direction checks that the
+# current tree can pass. The stricter sets (revive, gosec, dupl) are introduced
+# in refactor phase 9, once the baseline is clean; see
+# docs/source/refactor-plan.rst.
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - unparam
+    - gocritic
+    - gocyclo
+    - depguard
+    - revive
+    - gosec
+    - dupl
+  settings:
+    gocyclo:
+      min-complexity: 30
+    dupl:
+      threshold: 200
+    revive:
+      # Naming is enforced by gofmt/review; these rules would force a broad
+      # exported-API rename across the project. Keep the behavioural rules.
+      rules:
+        - name: var-naming
+          disabled: true
+        - name: unused-parameter
+          disabled: true
+        - name: receiver-naming
+          disabled: true
+        - name: indent-error-flow
+          disabled: true
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+    gosec:
+      # Intentional adapter patterns, documented in the security section of
+      # AGENTS.md: privileged subprocess argv, config-controlled paths,
+      # unsafe ethtool ioctls, non-crypto identifier randomness and bounded
+      # protobuf/config integer conversions. File/dir permissions and
+      # unhandled-error findings are not excluded.
+      excludes:
+        - G103
+        - G109
+        - G110
+        - G115
+        - G204
+        - G304
+        - G404
+    depguard:
+      rules:
+        # Dependency direction, enforced rather than documented only:
+        #   cmd -> server -> adapters (docker, namespace, ovs, update)
+        #                   -> foundation (link, options, utils)
+        #   console -> foundation
+        #   proto is the transport boundary; it may not leak into lower layers.
+        foundation:
+          files:
+            - "**/internal/link/**"
+            - "**/internal/utils/**"
+            - "**/internal/options/**"
+          list-mode: lax
+          deny:
+            - pkg: github.com/satcomprojects/gonetem/internal/server
+              desc: "foundation packages must not depend on the server layer"
+            - pkg: github.com/satcomprojects/gonetem/internal/console
+              desc: "foundation packages must not depend on the console"
+            - pkg: github.com/satcomprojects/gonetem/internal/docker
+              desc: "foundation packages must not depend on adapters"
+            - pkg: github.com/satcomprojects/gonetem/internal/namespace
+              desc: "foundation packages must not depend on adapters"
+            - pkg: github.com/satcomprojects/gonetem/internal/ovs
+              desc: "foundation packages must not depend on adapters"
+            - pkg: github.com/satcomprojects/gonetem/internal/update
+              desc: "foundation packages must not depend on adapters"
+            - pkg: github.com/satcomprojects/gonetem/internal/proto
+              desc: "protobuf types must stay at the transport boundary"
+        adapters:
+          files:
+            - "**/internal/docker/**"
+            - "**/internal/namespace/**"
+            - "**/internal/ovs/**"
+            - "**/internal/update/**"
+          list-mode: lax
+          deny:
+            - pkg: github.com/satcomprojects/gonetem/internal/server
+              desc: "adapters must not depend on the server layer"
+            - pkg: github.com/satcomprojects/gonetem/internal/console
+              desc: "adapters must not depend on the console"
+            - pkg: github.com/satcomprojects/gonetem/internal/proto
+              desc: "protobuf types must stay at the transport boundary"
+        server:
+          files:
+            - "**/internal/server/**"
+          list-mode: lax
+          deny:
+            - pkg: github.com/satcomprojects/gonetem/internal/console
+              desc: "the server must not depend on the console"
+        console:
+          files:
+            - "**/internal/console/**"
+          list-mode: lax
+          deny:
+            - pkg: github.com/satcomprojects/gonetem/internal/server
+              desc: "the console must not depend on server internals"
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+    paths:
+      - internal/proto
+    rules:
+      # Test helpers are allowed to keep the current errcheck/style baseline;
+      # assertions are never excluded.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gocritic
+          - gocyclo
+          - unparam
+          - gosec
+          - dupl
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

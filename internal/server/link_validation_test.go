@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/proto"
 )
 
 func TestSplitPeer(t *testing.T) {
@@ -60,11 +60,10 @@ func TestLinkAddUnknownNodeReturnsError(t *testing.T) {
 
 func TestLinkDelMissingLinkReturnsError(t *testing.T) {
 	prjID := "tst"
-	openProjects[prjID] = &NetemProject{
+	server := testServerWithProject(t, &NetemProject{
 		Id:       prjID,
 		Topology: &NetemTopologyManager{links: make([]*NetemLink, 0)},
-	}
-	defer delete(openProjects, prjID)
+	})
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -72,7 +71,7 @@ func TestLinkDelMissingLinkReturnsError(t *testing.T) {
 		}
 	}()
 
-	_, err := (&netemServer{}).LinkDel(context.Background(), &proto.LinkRequest{
+	_, err := server.LinkDel(context.Background(), &proto.LinkRequest{
 		PrjId: prjID,
 	})
 	if err == nil {

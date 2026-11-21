@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
@@ -42,7 +43,7 @@ func withNetns(ns netns.NsHandle, fn func() error) error {
 	}
 	defer func() {
 		if err := netns.Set(orig); err != nil {
-			logger.Errorf("unable to restore original netns: %v", err)
+			logrus.WithField("module", "link").Errorf("unable to restore original netns: %v", err)
 		}
 	}()
 
@@ -104,7 +105,7 @@ func CreateNetns(name string) (netns.NsHandle, error) {
 		return netns.None(), err
 	}
 	if restoreErr != nil {
-		ns.Close()
+		_ = ns.Close()
 		return netns.None(), fmt.Errorf("unable to restore original netns: %w", restoreErr)
 	}
 
@@ -305,20 +306,20 @@ func MoveInterfacesNetns(ifNames map[string]IfState, current netns.NsHandle, tar
 	})
 }
 
-func IpAddressAdd(ifName string, namespace netns.NsHandle, IPAddress string) error {
+func IpAddressAdd(ifName string, namespace netns.NsHandle, ipAddress string) error {
 	return withNetlinkHandle(namespace, func(handle *netlink.Handle) error {
 		l, err := handle.LinkByName(ifName)
 		if err != nil {
 			return fmt.Errorf("unable get link %s: %v", ifName, err)
 		}
 
-		addr, err := netlink.ParseAddr(IPAddress)
+		addr, err := netlink.ParseAddr(ipAddress)
 		if err != nil {
-			return fmt.Errorf("unable to parse IP address %s: %v", IPAddress, err)
+			return fmt.Errorf("unable to parse IP address %s: %v", ipAddress, err)
 		}
 
 		if err := handle.AddrAdd(l, addr); err != nil {
-			return fmt.Errorf("unable to add IP address %s to link %s: %v", IPAddress, ifName, err)
+			return fmt.Errorf("unable to add IP address %s to link %s: %v", ipAddress, ifName, err)
 		}
 		return nil
 	})

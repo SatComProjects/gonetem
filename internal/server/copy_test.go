@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/proto"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -59,7 +59,6 @@ func (s *copyToStreamStub) RecvMsg(any) error            { return nil }
 
 type copyFromStreamStub struct {
 	messages []*proto.CopyMsg
-	err      error
 }
 
 func (s *copyFromStreamStub) Send(msg *proto.CopyMsg) error {
@@ -73,21 +72,16 @@ func (s *copyFromStreamStub) Context() context.Context     { return context.Back
 func (s *copyFromStreamStub) SendMsg(any) error            { return nil }
 func (s *copyFromStreamStub) RecvMsg(any) error            { return nil }
 
-func registerCopyProject(t *testing.T, node INetemNode) string {
+func registerCopyProject(t *testing.T, node Node) (*netemServer, string) {
 	t.Helper()
 
 	prjID := "copytest"
-	openProjects[prjID] = &NetemProject{
+	server := testServerWithProject(t, &NetemProject{
 		Id:       prjID,
 		Name:     prjID,
 		Topology: &NetemTopologyManager{nodes: []NetemNode{{Instance: node}}},
-	}
-	t.Cleanup(func() {
-		projectsMu.Lock()
-		delete(openProjects, prjID)
-		projectsMu.Unlock()
 	})
-	return prjID
+	return server, prjID
 }
 
 func TestNodeCopyToRejectsDataBeforeInit(t *testing.T) {
@@ -97,7 +91,7 @@ func TestNodeCopyToRejectsDataBeforeInit(t *testing.T) {
 		},
 	}
 
-	if err := (&netemServer{}).NodeCopyTo(stream); err != nil {
+	if err := newTestServer().NodeCopyTo(stream); err != nil {
 		t.Fatalf("NodeCopyTo returned an error: %v", err)
 	}
 	if stream.ack == nil || stream.ack.GetStatus().GetCode() != proto.StatusCode_ERROR {
@@ -107,7 +101,7 @@ func TestNodeCopyToRejectsDataBeforeInit(t *testing.T) {
 
 func TestNodeCopyToCopiesFile(t *testing.T) {
 	node := &fakeCopyNode{fakeStartNode: fakeStartNode{name: "R1"}}
-	prjID := registerCopyProject(t, node)
+	server, prjID := registerCopyProject(t, node)
 
 	stream := &copyToStreamStub{
 		messages: []*proto.CopyMsg{
@@ -116,7 +110,7 @@ func TestNodeCopyToCopiesFile(t *testing.T) {
 		},
 	}
 
-	if err := (&netemServer{}).NodeCopyTo(stream); err != nil {
+	if err := server.NodeCopyTo(stream); err != nil {
 		t.Fatalf("NodeCopyTo returned an error: %v", err)
 	}
 	if stream.ack == nil || stream.ack.GetStatus().GetCode() != proto.StatusCode_OK {
@@ -129,10 +123,10 @@ func TestNodeCopyToCopiesFile(t *testing.T) {
 
 func TestNodeCopyFromMissingFileReturnsError(t *testing.T) {
 	node := &fakeCopyNode{fakeStartNode: fakeStartNode{name: "R1"}}
-	prjID := registerCopyProject(t, node)
+	server, prjID := registerCopyProject(t, node)
 
 	stream := &copyFromStreamStub{}
-	err := (&netemServer{}).NodeCopyFrom(&proto.CopyMsg{
+	err := server.NodeCopyFrom(&proto.CopyMsg{
 		PrjId:    prjID,
 		Node:     "R1",
 		NodePath: "/tmp/missing",

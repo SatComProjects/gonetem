@@ -4,13 +4,15 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/docker"
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/docker"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/testutil"
+	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 func TestOVS_Instance(t *testing.T) {
 	options.InitServerConfig()
+	testutil.RequireImage(t, options.GetDockerImageId(options.ServerConfig.Docker.OvsImage))
 	prjID := utils.RandString(4)
 
 	instance := GetOvsInstance(prjID)
@@ -19,7 +21,7 @@ func TestOVS_Instance(t *testing.T) {
 		return
 	}
 
-	instance, err := NewOvsInstance(prjID)
+	instance, err := newOvsInstanceForTest(prjID)
 	if err != nil {
 		t.Errorf("Unable to create ovs instance: %v", err)
 		return

@@ -13,8 +13,8 @@ import (
 
 // VERSION is a variable so release builds can override it with:
 //
-//	-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=..."
-var VERSION = "0.8.0"
+//	-ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=..."
+var VERSION = "0.9.0"
 
 const (
 	IMAGE_VERSION         = "0.6.0"
@@ -48,7 +48,7 @@ update:
   enabled: false
   repository: https://github.com/satcomprojects/gonetem
   branch: master
-  goVersion: "1.24.0"
+  goVersion: "1.27.4"
   workdir: ""
 `
 	INITIAL_SERVER_CONFIG = `
@@ -188,7 +188,7 @@ update:
   enabled: false
   repository: https://github.com/satcomprojects/gonetem
   branch: master
-  goVersion: "1.24.0"
+  goVersion: "1.27.4"
   workdir: ""
 `
 )
@@ -276,7 +276,7 @@ func InitServerConfig() {
 }
 
 func CreateServerConfig(config string) error {
-	return os.WriteFile(config, []byte(MINIMUM_SERVER_CONFIG), 0644)
+	return os.WriteFile(config, []byte(MINIMUM_SERVER_CONFIG), 0600)
 }
 
 func ParseServerConfig(config string) error {

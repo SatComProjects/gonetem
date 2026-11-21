@@ -4,13 +4,30 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/docker"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/testutil"
+	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
+var ovsTestConfigOnce sync.Once
+
+func testOvsConfig() docker.RuntimeConfig {
+	ovsTestConfigOnce.Do(options.InitServerConfig)
+	return docker.RuntimeConfigFromOptions(options.ServerConfig)
+}
+
+func newOvsInstanceForTest(prjID string) (*OvsProjectInstance, error) {
+	client, err := docker.NewDockerClient()
+	if err != nil {
+		return nil, err
+	}
+	return NewOvsInstance(client, testOvsConfig(), prjID)
+}
+
 func TestNewOvsNodeWithoutInstance(t *testing.T) {
-	node, err := NewOvsNode(utils.RandString(6), "sw1", "sw1")
+	node, err := NewOvsNode(utils.RandString(6), "sw1", "sw1", "")
 	if err != nil {
 		t.Fatalf("NewOvsNode returned an error: %v", err)
 	}
@@ -73,10 +90,11 @@ func TestOvsNode_InterfaceMapConcurrentAccess(t *testing.T) {
 
 func TestOvsNode_StartStop(t *testing.T) {
 	options.InitServerConfig()
+	testutil.RequireImage(t, options.GetDockerImageId(options.ServerConfig.Docker.OvsImage))
 	prjID := utils.RandString(3)
 	name := utils.RandString(4)
 
-	instance, err := NewOvsInstance(prjID)
+	instance, err := newOvsInstanceForTest(prjID)
 	if err != nil {
 		t.Errorf("Unable to create ovs instance: %v", err)
 		return
@@ -88,7 +106,7 @@ func TestOvsNode_StartStop(t *testing.T) {
 		return
 	}
 
-	node, err := NewOvsNode(prjID, name, name)
+	node, err := NewOvsNode(prjID, name, name, "")
 	if err != nil {
 		t.Errorf("Unable to create ovs node: %v", err)
 		return
@@ -122,10 +140,12 @@ func TestOvsNode_StartStop(t *testing.T) {
 }
 
 func TestOvsNode_AttachLink(t *testing.T) {
+	testutil.RequireRoot(t)
 	options.InitServerConfig()
+	testutil.RequireImage(t, options.GetDockerImageId(options.ServerConfig.Docker.OvsImage))
 	prjID := utils.RandString(3)
 
-	instance, err := NewOvsInstance(prjID)
+	instance, err := newOvsInstanceForTest(prjID)
 	if err != nil {
 		t.Errorf("Unable to create ovs instance: %v", err)
 		return
@@ -137,14 +157,14 @@ func TestOvsNode_AttachLink(t *testing.T) {
 		return
 	}
 
-	node1, err := NewOvsNode(prjID, utils.RandString(4), utils.RandString(4))
+	node1, err := NewOvsNode(prjID, utils.RandString(4), utils.RandString(4), "")
 	if err != nil {
 		t.Errorf("Unable to create ovs node: %v", err)
 		return
 	}
 	defer node1.Close()
 
-	node2, err := NewOvsNode(prjID, utils.RandString(4), utils.RandString(4))
+	node2, err := NewOvsNode(prjID, utils.RandString(4), utils.RandString(4), "")
 	if err != nil {
 		t.Errorf("Unable to create ovs node: %v", err)
 		return

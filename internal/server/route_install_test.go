@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/proto"
 )
 
-func registerRouteProject(t *testing.T, nodes ...INetemNode) string {
+func registerRouteProject(t *testing.T, nodes ...Node) (*netemServer, string) {
 	t.Helper()
 
 	prjID := "routetest"
@@ -21,19 +21,12 @@ func registerRouteProject(t *testing.T, nodes ...INetemNode) string {
 		netemNodes[idx] = NetemNode{Instance: node}
 	}
 
-	projectsMu.Lock()
-	openProjects[prjID] = &NetemProject{
+	server := testServerWithProject(t, &NetemProject{
 		Id:       prjID,
 		Name:     prjID,
 		Topology: &NetemTopologyManager{nodes: netemNodes},
-	}
-	projectsMu.Unlock()
-	t.Cleanup(func() {
-		projectsMu.Lock()
-		delete(openProjects, prjID)
-		projectsMu.Unlock()
 	})
-	return prjID
+	return server, prjID
 }
 
 type fakeRouteNode struct {
@@ -83,7 +76,7 @@ func TestRouteInstallAppliesBatchesWithBoundedConcurrency(t *testing.T) {
 	options.ServerConfig.Docker.RouteConcurrency = 8
 	defer func() { options.ServerConfig.Docker.RouteConcurrency = previous }()
 
-	prjID := registerRouteProject(t,
+	server, prjID := registerRouteProject(t,
 		&fakeStartNode{name: "R1"},
 		&fakeStartNode{name: "R2"},
 		&fakeStartNode{name: "R3"},
@@ -91,7 +84,7 @@ func TestRouteInstallAppliesBatchesWithBoundedConcurrency(t *testing.T) {
 	)
 
 	var active, maxActive atomic.Int32
-	apply := func(_ context.Context, node INetemNode, specs []link.RouteSpec) (int, error) {
+	apply := func(_ context.Context, node RouteNode, specs []link.RouteSpec) (int, error) {
 		current := active.Add(1)
 		for {
 			observed := maxActive.Load()
@@ -107,7 +100,8 @@ func TestRouteInstallAppliesBatchesWithBoundedConcurrency(t *testing.T) {
 		return len(specs), nil
 	}
 
-	response, err := (&netemServer{routeApplier: apply}).RouteInstall(context.Background(), &proto.RouteInstallRequest{
+	server.routeApplier = apply
+	response, err := server.RouteInstall(context.Background(), &proto.RouteInstallRequest{
 		PrjId:          prjID,
 		MaxConcurrency: 2,
 		Nodes: map[string]*proto.RouteBatch{
@@ -141,15 +135,16 @@ func TestRouteInstallAppliesBatchesWithBoundedConcurrency(t *testing.T) {
 }
 
 func TestRouteInstallReportsMissingNodeWithoutAborting(t *testing.T) {
-	prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
+	server, prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
 
 	called := 0
-	apply := func(_ context.Context, _ INetemNode, specs []link.RouteSpec) (int, error) {
+	apply := func(_ context.Context, _ RouteNode, specs []link.RouteSpec) (int, error) {
 		called++
 		return len(specs), nil
 	}
 
-	response, err := (&netemServer{routeApplier: apply}).RouteInstall(context.Background(), &proto.RouteInstallRequest{
+	server.routeApplier = apply
+	response, err := server.RouteInstall(context.Background(), &proto.RouteInstallRequest{
 		PrjId: prjID,
 		Nodes: map[string]*proto.RouteBatch{
 			"R1":      routeBatch("10.0.0.0/24"),
@@ -171,15 +166,16 @@ func TestRouteInstallReportsMissingNodeWithoutAborting(t *testing.T) {
 }
 
 func TestRouteInstallRejectsInvalidSpecBeforeApplying(t *testing.T) {
-	prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
+	server, prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
 
 	called := false
-	apply := func(_ context.Context, _ INetemNode, _ []link.RouteSpec) (int, error) {
+	apply := func(_ context.Context, _ RouteNode, _ []link.RouteSpec) (int, error) {
 		called = true
 		return 0, nil
 	}
 
-	response, err := (&netemServer{routeApplier: apply}).RouteInstall(context.Background(), &proto.RouteInstallRequest{
+	server.routeApplier = apply
+	response, err := server.RouteInstall(context.Background(), &proto.RouteInstallRequest{
 		PrjId: prjID,
 		Nodes: map[string]*proto.RouteBatch{
 			"R1": routeBatch("not-a-cidr"),
@@ -197,17 +193,18 @@ func TestRouteInstallRejectsInvalidSpecBeforeApplying(t *testing.T) {
 }
 
 func TestRouteInstallHonorsCanceledContext(t *testing.T) {
-	prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
+	server, prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
 
 	called := false
-	apply := func(_ context.Context, _ INetemNode, _ []link.RouteSpec) (int, error) {
+	apply := func(_ context.Context, _ RouteNode, _ []link.RouteSpec) (int, error) {
 		called = true
 		return 0, nil
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	response, err := (&netemServer{routeApplier: apply}).RouteInstall(ctx, &proto.RouteInstallRequest{
+	server.routeApplier = apply
+	response, err := server.RouteInstall(ctx, &proto.RouteInstallRequest{
 		PrjId: prjID,
 		Nodes: map[string]*proto.RouteBatch{
 			"R1": routeBatch("10.0.0.0/24"),
@@ -225,9 +222,9 @@ func TestRouteInstallHonorsCanceledContext(t *testing.T) {
 }
 
 func TestRouteInstallEmptyRequest(t *testing.T) {
-	prjID := registerRouteProject(t)
+	server, prjID := registerRouteProject(t)
 
-	response, err := (&netemServer{}).RouteInstall(context.Background(), &proto.RouteInstallRequest{PrjId: prjID})
+	response, err := server.RouteInstall(context.Background(), &proto.RouteInstallRequest{PrjId: prjID})
 	if err != nil {
 		t.Fatalf("RouteInstall returned an error: %v", err)
 	}
@@ -240,22 +237,16 @@ func TestRouteInstallEmptyRequest(t *testing.T) {
 }
 
 func TestRouteInstallLimit(t *testing.T) {
-	previous := options.ServerConfig.Docker.RouteConcurrency
-	defer func() { options.ServerConfig.Docker.RouteConcurrency = previous }()
-
-	options.ServerConfig.Docker.RouteConcurrency = 8
-	if got := routeInstallLimit(0); got != 8 {
+	if got := routeInstallLimit(8, 0); got != 8 {
 		t.Fatalf("server default = %d, want 8", got)
 	}
-	if got := routeInstallLimit(4); got != 4 {
+	if got := routeInstallLimit(8, 4); got != 4 {
 		t.Fatalf("requested lower limit = %d, want 4", got)
 	}
-	if got := routeInstallLimit(16); got != 8 {
+	if got := routeInstallLimit(8, 16); got != 8 {
 		t.Fatalf("requested higher limit = %d, want 8", got)
 	}
-
-	options.ServerConfig.Docker.RouteConcurrency = 0
-	if got := routeInstallLimit(0); got != defaultRouteConcurrency {
+	if got := routeInstallLimit(0, 0); got != defaultRouteConcurrency {
 		t.Fatalf("fallback default = %d, want %d", got, defaultRouteConcurrency)
 	}
 }

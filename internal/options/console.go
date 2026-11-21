@@ -49,7 +49,7 @@ func InitConsoleConfig() {
 	}
 
 	config := path.Join(currentUser.HomeDir, ".config", "gonetem-console", CONSOLE_CONFIG_FILENAME)
-	if err := os.MkdirAll(path.Dir(config), 0755); err != nil {
+	if err := os.MkdirAll(path.Dir(config), 0750); err != nil {
 		log.Fatalf("Unable to create config directory for user: %s", err)
 	}
 
@@ -76,11 +76,15 @@ func SaveConsoleConfig() error {
 
 	config := path.Join(currentUser.HomeDir, ".config", "gonetem-console", CONSOLE_CONFIG_FILENAME)
 	data, _ := yaml.Marshal(ConsoleConfig)
-	return os.WriteFile(config, data, 0644)
+	return os.WriteFile(config, data, 0600)
 }
 
 func LoadConsoleTLSCredentials() (credentials.TransportCredentials, error) {
-	certPool, consoleCerts, err := loadTLSCerts(ConsoleConfig.Tls)
+	return LoadConsoleTLSCredentialsFor(ConsoleConfig.Tls)
+}
+
+func LoadConsoleTLSCredentialsFor(tlsConfig TLSOptions) (credentials.TransportCredentials, error) {
+	certPool, consoleCerts, err := loadTLSCerts(tlsConfig)
 	if err != nil {
 		return nil, err
 	}

@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/options"
 )
 
 func TestImageTypesForPullIncludesExtraNodes(t *testing.T) {
@@ -18,7 +18,7 @@ func TestImageTypesForPullIncludesExtraNodes(t *testing.T) {
 		{Type: "ground", Image: "example/satellite:v1"},
 	}
 
-	images := imageTypesForPull()
+	images := ConfigFromOptions(options.ServerConfig).PullImages
 	found := 0
 	for _, image := range images {
 		if image == "example/satellite:v1" {

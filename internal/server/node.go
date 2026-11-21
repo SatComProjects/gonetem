@@ -1,18 +1,13 @@
 package server
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"regexp"
 	"sync"
 
-	"github.com/moby/term"
-	"github.com/mroy31/gonetem/internal/docker"
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/namespace"
-	"github.com/mroy31/gonetem/internal/ovs"
-	"github.com/vishvananda/netns"
+	"github.com/satcomprojects/gonetem/internal/docker"
+	"github.com/satcomprojects/gonetem/internal/namespace"
+	"github.com/satcomprojects/gonetem/internal/ovs"
 )
 
 var (
@@ -80,36 +75,29 @@ func (nIdGen *NodeIdentifierGenerator) Close() {
 	nIdGen.usedIds = make([]string, 0)
 }
 
-type INetemNode interface {
-	GetName() string
-	GetShortName() string
-	GetType() string
-	GetFullType() string
-	IsRunning() bool
-	Start() error
-	Stop() error
-	GetNetns() (netns.NsHandle, error)
-	GetInterfaceName(ifIndex int) string
-	AttachMgntInterface(ifName string, ns netns.NsHandle, IPAddress string) error
-	AttachInterface(ifName string, ifIndex int, configure bool) error
-	DetachInterface(ifName string) error
-	ConfigureInterfaces() error
-	LoadConfig(confPath string, timeout int) ([]string, error)
-	ExecCommand(ctx context.Context, cmd []string, in io.ReadCloser, out io.Writer, tty bool, ttyHeight uint, ttyWidth uint, resizeCh chan term.Winsize) error
-	RunCommand(cmd []string) ([]byte, []byte, int, error)
-	GetConsoleCmd(shell bool) ([]string, error)
-	Capture(ctx context.Context, ifIndex int, out io.Writer) error
-	CopyFrom(srcPath, destPath string) error
-	CopyTo(srcPath, destPath string) error
-	ReadConfigFiles(confDir string, timeout int) (map[string][]byte, error)
-	Save(dstPath string, timeout int) error
-	GetInterfacesState() map[string]link.IfState
-	SetInterfaceState(ifIndex int, state link.IfState) error
-	Kill() error
-	Close() error
+// NodeFactory builds node adapters with their explicit dependencies. The
+// composition root (Phase 8) will construct it once and pass it down.
+type NodeFactory struct {
+	docker docker.ContainerNodeAPI
+	config docker.RuntimeConfig
 }
 
-func CreateNode(prjID string, name string, shortName string, config NodeConfig) (INetemNode, error) {
+// NewNodeFactory builds a factory from the injected Docker client and adapter
+// configuration. It does not contact the daemon.
+func NewNodeFactory(client docker.ContainerNodeAPI, config docker.RuntimeConfig) *NodeFactory {
+	return &NodeFactory{docker: client, config: config}
+}
+
+// CreateOvsInstance creates the project OVS instance with the factory client.
+func (f *NodeFactory) CreateOvsInstance(prjID string) (*ovs.OvsProjectInstance, error) {
+	if f.docker == nil {
+		return nil, fmt.Errorf("docker client is not configured for OVS instance")
+	}
+	return ovs.NewOvsInstance(f.docker, f.config, prjID)
+}
+
+// Create builds one node from its topology configuration.
+func (f *NodeFactory) Create(prjID string, name string, shortName string, config NodeConfig) (Node, error) {
 	// first test if it is a docker node
 	re := regexp.MustCompile(`^docker\.(\w+)$`)
 	groups := re.FindStringSubmatch(config.Type)
@@ -133,12 +121,15 @@ func CreateNode(prjID string, name string, shortName string, config NodeConfig) 
 			})
 		}
 
-		return docker.NewDockerNode(prjID, groups[1], options)
+		if f.docker == nil {
+			return nil, fmt.Errorf("docker client is not configured for node %s", name)
+		}
+		return docker.NewDockerNode(f.docker, f.config, prjID, groups[1], options)
 	}
 
 	// then test if it is a switch
 	if config.Type == "ovs" {
-		return ovs.NewOvsNode(prjID, name, shortName)
+		return ovs.NewOvsNode(prjID, name, shortName, f.config.Workdir)
 	}
 
 	// finally test if it is a pure network namespace

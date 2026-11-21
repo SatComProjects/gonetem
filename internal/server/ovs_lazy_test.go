@@ -5,12 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 func TestTopologyRunCreatesOvsLazily(t *testing.T) {
-	options.InitServerConfig()
+	requireOvsCapabilities(t)
 
 	dir := t.TempDir()
 	network := `
@@ -22,7 +21,7 @@ nodes:
 		t.Fatal(err)
 	}
 
-	topology, err := LoadTopology(utils.RandString(6), dir)
+	topology, err := loadTestTopology(utils.RandString(6), dir)
 	if err != nil {
 		t.Fatalf("LoadTopology returned an error: %v", err)
 	}

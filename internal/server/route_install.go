@@ -7,9 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/proto"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -17,8 +16,7 @@ const defaultRouteConcurrency = 32
 
 // routeInstallLimit returns the number of node batches that may run in
 // parallel. A client-provided value can only lower the server-side limit.
-func routeInstallLimit(requested int) int {
-	configured := options.ServerConfig.Docker.RouteConcurrency
+func routeInstallLimit(configured, requested int) int {
 	if configured <= 0 {
 		configured = defaultRouteConcurrency
 	}
@@ -28,14 +26,14 @@ func routeInstallLimit(requested int) int {
 	return requested
 }
 
-func (s *netemServer) applyNodeRoutes(ctx context.Context, node INetemNode, specs []link.RouteSpec) (int, error) {
+func (s *netemServer) applyNodeRoutes(ctx context.Context, node RouteNode, specs []link.RouteSpec) (int, error) {
 	if s.routeApplier != nil {
 		return s.routeApplier(ctx, node, specs)
 	}
 	return applyRoutesToNode(ctx, node, specs)
 }
 
-func applyRoutesToNode(ctx context.Context, node INetemNode, specs []link.RouteSpec) (int, error) {
+func applyRoutesToNode(ctx context.Context, node RouteNode, specs []link.RouteSpec) (int, error) {
 	if node.GetType() == "ovs" {
 		return 0, fmt.Errorf("route installation is not supported on OVS node %s", node.GetName())
 	}
@@ -58,7 +56,7 @@ func applyRoutesToNode(ctx context.Context, node INetemNode, specs []link.RouteS
 // RouteInstall applies a batch of route changes to several nodes. Per-node
 // failures are reported in the response and do not abort the other nodes.
 func (s *netemServer) RouteInstall(ctx context.Context, request *proto.RouteInstallRequest) (*proto.RouteInstallResponse, error) {
-	project := ProjectGetOne(request.GetPrjId())
+	project := s.projects.Get(request.GetPrjId())
 	if project == nil {
 		return nil, &ProjectNotFoundError{request.GetPrjId()}
 	}
@@ -81,7 +79,7 @@ func (s *netemServer) RouteInstall(ctx context.Context, request *proto.RouteInst
 		}, nil
 	}
 
-	limit := routeInstallLimit(int(request.GetMaxConcurrency()))
+	limit := routeInstallLimit(s.config.RouteConcurrency, int(request.GetMaxConcurrency()))
 	group := new(errgroup.Group)
 	group.SetLimit(limit)
 
@@ -169,7 +167,7 @@ func routeSpecsFromProto(batch *proto.RouteBatch) ([]link.RouteSpec, error) {
 			}
 		}
 
-		action := link.RouteReplace
+		var action link.RouteAction
 		switch route.GetAction() {
 		case proto.RouteAction_ROUTE_REPLACE:
 			action = link.RouteReplace

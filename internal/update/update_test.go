@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/options"
 )
 
 type testLogger struct {
@@ -37,7 +37,7 @@ func TestUpdater_Disabled(t *testing.T) {
 
 func TestUpdater_UnsupportedArch(t *testing.T) {
 	u := &Updater{
-		Config: options.UpdateConfig{Enabled: true, GoVersion: "1.24.0"},
+		Config: options.UpdateConfig{Enabled: true, GoVersion: "1.27.4"},
 		Arch:   "riscv64",
 	}
 	if err := u.Run(context.Background()); !errors.Is(err, ErrUnsupportedPlatform) {
@@ -263,7 +263,7 @@ func TestUpdater_Install(t *testing.T) {
 
 	logger := &testLogger{}
 	u := &Updater{Logger: logger, Arch: "amd64", InstallDir: installDir}
-	if err := u.install(context.Background(), workdir); err != nil {
+	if err := u.install(workdir); err != nil {
 		t.Fatalf("unable to install: %v", err)
 	}
 
@@ -281,7 +281,7 @@ func TestUpdater_Install(t *testing.T) {
 
 func TestUpdater_InstallMissingBinary(t *testing.T) {
 	u := &Updater{Arch: "amd64", InstallDir: t.TempDir()}
-	if err := u.install(context.Background(), t.TempDir()); err == nil {
+	if err := u.install(t.TempDir()); err == nil {
 		t.Error("install must fail when the binaries have not been built")
 	}
 }
@@ -302,7 +302,7 @@ func TestUpdater_Run_LogsSteps(t *testing.T) {
 			Enabled:    true,
 			Repository: "https://invalid.example.invalid/gonetem",
 			Branch:     "master",
-			GoVersion:  "1.24.0",
+			GoVersion:  "1.27.4",
 			Workdir:    t.TempDir(),
 		},
 		Logger: logger,

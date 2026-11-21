@@ -102,7 +102,7 @@ func TestOptions_ParseServerConfig_UpdateDefaults(t *testing.T) {
 	if ServerConfig.Update.Branch != "master" {
 		t.Errorf("unexpected default branch: %s", ServerConfig.Update.Branch)
 	}
-	if ServerConfig.Update.GoVersion != "1.24.0" {
+	if ServerConfig.Update.GoVersion != "1.27.4" {
 		t.Errorf("unexpected default go version: %s", ServerConfig.Update.GoVersion)
 	}
 	if ServerConfig.Docker.RouteConcurrency != 32 {

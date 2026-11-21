@@ -18,43 +18,43 @@ proto: internal/proto/netem.proto
 
 build-console-amd64:
 	env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ./bin/gonetem-console_amd64 \
-		-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=$(VERSION)" \
+		-ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=$(VERSION)" \
 		cmd/gonetem-console/main.go
 
 build-server-amd64:
 	env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ./bin/gonetem-server_amd64 \
-		-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=$(VERSION)" \
+		-ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=$(VERSION)" \
 		cmd/gonetem-server/main.go
 
 build-amd64: build-console-amd64 build-server-amd64
 
 build-console-armv7:
 	env CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -o ./bin/gonetem-console_armv7 \
-		-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=$(VERSION)" \
+		-ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=$(VERSION)" \
 		cmd/gonetem-console/main.go
 
 build-server-armv7:
 	env CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -o ./bin/gonetem-server_armv7 \
-		-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=$(VERSION)" \
+		-ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=$(VERSION)" \
 		cmd/gonetem-server/main.go
 
 build-armv7: build-console-armv7 build-server-armv7
 
 build-console-arm64:
 	env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ./bin/gonetem-console_arm64 \
-		-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=$(VERSION)" \
+		-ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=$(VERSION)" \
 		cmd/gonetem-console/main.go
 
 build-server-arm64:
 	env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ./bin/gonetem-server_arm64 \
-		-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=$(VERSION)" \
+		-ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=$(VERSION)" \
 		cmd/gonetem-server/main.go
 
 build-arm64: build-console-arm64 build-server-arm64
 
 build-console-darwin-arm64:
 	env CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o ./bin/gonetem-console_darwin_arm64 \
-		-ldflags "-X github.com/mroy31/gonetem/internal/options.VERSION=$(VERSION)" \
+		-ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=$(VERSION)" \
 		cmd/gonetem-console/main.go
 
 build-deb-amd64: clean build-amd64
@@ -125,7 +125,62 @@ uninstall:
 
 
 
-test:
-	sudo go test ./...
+# ---------------------------------------------------------------------------
+# Quality gates
+#
+# `make check` is the fast, hermetic gate used by contributors and CI.
+# Kernel/Docker integration tests are deliberately separate: they need root,
+# Docker images and a privileged host.
+# ---------------------------------------------------------------------------
 
-.PHONY: clean proto build-amd64 build-amrv7 build-arm64 build-deb-amd64 build-deb-arm64 install-amd64 install-arm64
+GO ?= go
+GOLANGCI_LINT ?= golangci-lint
+COVERAGE_FILE ?= coverage.out
+COVERAGE_THRESHOLDS ?= .coverage-thresholds
+COVER_PKGS := $(shell $(GO) list ./... 2>/dev/null | grep -v -e /internal/proto -e /internal/testutil)
+
+fmt:
+	gofmt -w cmd internal
+	$(GOLANGCI_LINT) fmt
+
+fmt-check:
+	@files="$$(gofmt -l cmd internal)"; \
+	if [ -n "$$files" ]; then \
+		echo "gofmt required for:"; echo "$$files"; exit 1; \
+	fi
+
+vet:
+	$(GO) vet ./...
+
+lint:
+	$(GOLANGCI_LINT) run ./...
+
+test-unit:
+	$(GO) test -short -shuffle=on -count=1 ./...
+
+test-race:
+	$(GO) test -short -race -shuffle=on -count=1 ./...
+
+test-integration:
+	sudo env "PATH=$$PATH" GONETEM_REQUIRE_INTEGRATION=1 $(GO) test -count=1 ./...
+
+# Kept for backwards compatibility: the full suite needs root.
+test: test-integration
+
+cover:
+	$(GO) test -short -count=1 -covermode=atomic -coverprofile=$(COVERAGE_FILE) $(COVER_PKGS)
+	$(GO) tool cover -func=$(COVERAGE_FILE) | tail -1
+
+cover-check: cover
+	./scripts/check-coverage.sh $(COVERAGE_FILE) $(COVERAGE_THRESHOLDS)
+
+govulncheck:
+	./scripts/check-vulnerabilities.sh
+
+build:
+	$(GO) build ./...
+
+check: fmt-check vet lint test-unit test-race build
+
+.PHONY: clean proto build-amd64 build-amrv7 build-arm64 build-deb-amd64 build-deb-arm64 install-amd64 install-arm64 \
+	fmt fmt-check vet lint test test-unit test-race test-integration cover cover-check govulncheck build check

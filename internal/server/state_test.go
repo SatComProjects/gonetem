@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/proto"
 )
 
 type fakeIfNode struct {
@@ -18,9 +18,9 @@ func (n *fakeIfNode) SetInterfaceState(int, link.IfState) error {
 
 func TestNodeSetIfStateRejectsUnknownState(t *testing.T) {
 	node := &fakeIfNode{fakeStartNode: fakeStartNode{name: "R1"}}
-	prjID := registerCopyProject(t, node)
+	server, prjID := registerCopyProject(t, node)
 
-	_, err := (&netemServer{}).NodeSetIfState(context.Background(), &proto.NodeIfStateRequest{
+	_, err := server.NodeSetIfState(context.Background(), &proto.NodeIfStateRequest{
 		PrjId:   prjID,
 		Node:    "R1",
 		IfIndex: 0,

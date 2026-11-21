@@ -1,0 +1,56 @@
+name: Refactor or quality task
+description: A behaviour-preserving refactor, test-hardening or quality-gate task.
+title: "refactor: "
+labels: ["refactor", "quality"]
+body:
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Refactor phase
+      description: Phase from docs/source/refactor-plan.rst.
+      options:
+        - "Phase 0 - Baseline and guardrails"
+        - "Phase 1 - Hermetic test architecture"
+        - "Phase 2 - Interfaces and dependency inversion"
+        - "Phase 3 - Link and QoS domain"
+        - "Phase 4 - Node adapters"
+        - "Phase 5 - Topology engine"
+        - "Phase 6 - gRPC services and project registry"
+        - "Phase 7 - Console"
+        - "Phase 8 - Configuration and composition root"
+        - "Phase 9 - Hardening and release"
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current pain
+      description: What is hard to change or test today? Include files, line ranges and measured symptoms.
+    validations:
+      required: true
+  - type: textarea
+    id: target
+    attributes:
+      label: Target state
+      description: What changes, which SOLID principle it addresses, and what explicitly does not change.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Characterization and TDD plan
+      description: Which tests are written first? How will behaviour preservation be proven?
+    validations:
+      required: true
+  - type: textarea
+    id: exit
+    attributes:
+      label: Exit criteria
+      description: Measurable conditions for closing this task (coverage, size, lint, race, dependency rules, integration).
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: Risks and dependencies
+      description: Other phases, feature work in flight, privileged test needs, rollback.

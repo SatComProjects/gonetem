@@ -2,23 +2,17 @@ package link
 
 import (
 	"net"
-	"os"
 	"runtime"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/testutil"
+	"github.com/satcomprojects/gonetem/internal/utils"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )
 
-func skipUnlessRoot(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("Test requires root privileges.")
-	}
-}
-
 func setUpNetlinkTest(t *testing.T) (netns.NsHandle, func()) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	// new temporary namespace so we don't pollute the host
 	// lock thread since the namespace is thread local
@@ -45,7 +39,7 @@ func checkLinkExistence(t *testing.T, lkNames ...string) {
 }
 
 func TestWithNetnsRestoresOriginalNamespace(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -104,7 +98,7 @@ func TestLink_CreateVeth(t *testing.T) {
 }
 
 func TestCreateVethLinkAcrossNamespaces(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()

@@ -1,0 +1,2 @@
+# Documentation build requirements (Read the Docs and local builds).
+sphinx>=7.0,<9.0

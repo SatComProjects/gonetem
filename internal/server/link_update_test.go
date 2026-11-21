@@ -131,7 +131,7 @@ func TestApplyLinkUpdateConfigDefaultsBuffer(t *testing.T) {
 func TestApplyPeerQoSDiffNoopSkipsKernelWork(t *testing.T) {
 	hasTbf, hasNetem := false, false
 	q := QoSConfig{Delay: 10, Loss: 1}
-	if err := applyPeerQoSDiff("missing", 0, q, q, &hasTbf, &hasNetem); err != nil {
+	if err := applyPeerQoSDiff(nil, "missing", 0, q, q, &hasTbf, &hasNetem); err != nil {
 		t.Fatalf("no-op diff returned an error: %v", err)
 	}
 }

@@ -8,9 +8,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mroy31/gonetem/internal/options"
-	pb "github.com/mroy31/gonetem/internal/proto"
-	"github.com/mroy31/gonetem/internal/server"
+	"github.com/satcomprojects/gonetem/internal/docker"
+	"github.com/satcomprojects/gonetem/internal/options"
+	pb "github.com/satcomprojects/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/server"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )
@@ -62,9 +63,13 @@ func main() {
 	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(interrupt)
 
-	netemServer := server.NewServer()
+	dockerClient, err := docker.NewDockerClient()
+	if err != nil {
+		logrus.Fatalf("unable to initialize Docker client: %v", err)
+	}
+	netemServer := server.NewServer(dockerClient, server.ConfigFromOptions(options.ServerConfig))
 	go func() {
-		var serverOptions []grpc.ServerOption = make([]grpc.ServerOption, 0)
+		serverOptions := make([]grpc.ServerOption, 0)
 
 		logrus.Infof("TLS enabled: %t", options.ServerConfig.Tls.Enabled)
 		if options.ServerConfig.Tls.Enabled {
@@ -114,6 +119,6 @@ func main() {
 	}
 	// remove unix socket file
 	if _, err := os.Stat(options.ServerConfig.Listen); err == nil {
-		os.Remove(options.ServerConfig.Listen)
+		_ = os.Remove(options.ServerConfig.Listen)
 	}
 }

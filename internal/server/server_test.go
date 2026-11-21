@@ -8,14 +8,14 @@ import (
 	"net"
 	"os"
 	"path"
-	"path/filepath"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/proto"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/utils"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -28,7 +28,7 @@ func TestMain(m *testing.M) {
 func dialer() func(context.Context, string) (net.Conn, error) {
 	listener := bufconn.Listen(1024 * 1024)
 	server := grpc.NewServer()
-	proto.RegisterNetemServer(server, &netemServer{})
+	proto.RegisterNetemServer(server, newTestServer())
 
 	go func() {
 		if err := server.Serve(listener); err != nil {
@@ -86,7 +86,11 @@ func TestServer_Version(t *testing.T) {
 	options.InitServerConfig()
 	ctx := context.Background()
 
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer()),
+	)
 	if err != nil {
 		stdlog.Fatal(err)
 	}
@@ -113,7 +117,11 @@ func TestServer_UpdateDisabled(t *testing.T) {
 	options.InitServerConfig()
 	ctx := context.Background()
 
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer()),
+	)
 	if err != nil {
 		stdlog.Fatal(err)
 	}
@@ -138,7 +146,11 @@ func TestServer_Project(t *testing.T) {
 	options.InitServerConfig()
 	ctx := context.Background()
 
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer()),
+	)
 	if err != nil {
 		stdlog.Fatal(err)
 	}
@@ -155,23 +167,12 @@ func TestServer_Project(t *testing.T) {
 		t.Errorf("Unexpected number of open projects: %d != 0", len(response.GetProjects()))
 	}
 
-	// create simple project
-	prjPath := "/tmp/prjtest-archive.gnet"
-	if err := createProject(prjPath, simpleNetwork); err != nil {
-		t.Errorf("Unable to create .gnet file: %v", err)
-		return
-	}
-	defer os.Remove(prjPath)
-	data, err := os.ReadFile(prjPath)
-	if err != nil {
-		t.Errorf("Unable to open created .gnet file: %v", err)
-		return
-	}
-
-	// open project
+	// open a project built from namespace nodes: no images or privileges are
+	// needed until the topology is started.
+	prjName := "phase1-project.gnet"
 	openResponse, err := client.ProjectOpen(ctx, &proto.OpenRequest{
-		Name: filepath.Base(prjPath),
-		Data: data,
+		Name: prjName,
+		Data: createProjectArchive(t, namespaceNetwork),
 	})
 	if err != nil {
 		t.Errorf("OpenProject method return an error: %v", err)
@@ -208,30 +209,23 @@ func TestServer_Save(t *testing.T) {
 	options.InitServerConfig()
 	ctx := context.Background()
 
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer()),
+	)
 	if err != nil {
 		stdlog.Fatal(err)
 	}
 	defer conn.Close()
 
 	client := proto.NewNetemClient(conn)
-	// create simple project
-	prjPath := "/tmp/prjtest-archive.gnet"
-	if err := createProject(prjPath, simpleNetwork); err != nil {
-		t.Errorf("Unable to create .gnet file: %v", err)
-		return
-	}
-	defer os.Remove(prjPath)
-	data, err := os.ReadFile(prjPath)
-	if err != nil {
-		t.Errorf("Unable to open created .gnet file: %v", err)
-		return
-	}
-
-	// open project
+	// open a project built from namespace nodes: no images or privileges are
+	// needed until the topology is started.
+	prjName := "phase1-project.gnet"
 	openResponse, err := client.ProjectOpen(ctx, &proto.OpenRequest{
-		Name: filepath.Base(prjPath),
-		Data: data,
+		Name: prjName,
+		Data: createProjectArchive(t, namespaceNetwork),
 	})
 	if err != nil {
 		t.Errorf("OpenProject method return an error: %v", err)
@@ -260,17 +254,15 @@ func TestServer_Save(t *testing.T) {
 		t.Errorf("ReadNetworkFile method return an error: %v", err)
 		return
 	}
-	if string(netResponse.GetData()) != simpleNetwork.network {
+	if string(netResponse.GetData()) != namespaceNetwork.network {
 		t.Errorf("ReadNetworkFile: result different from expected network file")
 	}
 
 	// write network file
 	newNetwork := `
 nodes:
-- name: R1
-  type: docker.router
-  ipv6: false
-  mpls: false
+  n4:
+    type: namespace
 `
 	if _, err := client.WriteNetworkFile(ctx, &proto.WNetworkRequest{
 		Id:   prjID,
@@ -334,7 +326,11 @@ func TestServer_NodeAddDel(t *testing.T) {
 	options.InitServerConfig()
 	ctx := context.Background()
 
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer()))
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer()),
+	)
 	if err != nil {
 		stdlog.Fatal(err)
 	}
@@ -342,21 +338,10 @@ func TestServer_NodeAddDel(t *testing.T) {
 
 	client := proto.NewNetemClient(conn)
 
-	// create simple project
-	prjPath := "/tmp/prjtest-nodeadddel.gnet"
-	if err := createProject(prjPath, simpleNetwork); err != nil {
-		t.Fatalf("Unable to create .gnet file: %v", err)
-	}
-	defer os.Remove(prjPath)
-	data, err := os.ReadFile(prjPath)
-	if err != nil {
-		t.Fatalf("Unable to open created .gnet file: %v", err)
-	}
-
-	// open project
+	prjName := "phase1-nodeadddel.gnet"
 	openResponse, err := client.ProjectOpen(ctx, &proto.OpenRequest{
-		Name: filepath.Base(prjPath),
-		Data: data,
+		Name: prjName,
+		Data: createProjectArchive(t, namespaceNetwork),
 	})
 	if err != nil {
 		t.Fatalf("OpenProject method return an error: %v", err)
@@ -383,8 +368,7 @@ func TestServer_NodeAddDel(t *testing.T) {
 		PrjId: prjID,
 		Node:  "newhost",
 		Config: &proto.NodeConfigMsg{
-			Type:   "docker.host",
-			Ipv6:   true,
+			Type:   "namespace",
 			Launch: false,
 		},
 		Sync: true,

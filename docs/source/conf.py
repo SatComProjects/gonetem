@@ -24,9 +24,9 @@ copyright = "2025, Mickael Royer"
 author = "Mickael Royer"
 
 # The short X.Y version
-version = '0.8.0'
+version = '0.9.0'
 # The full version, including alpha/beta/rc tags
-release = '0.8.0'
+release = '0.9.0'
 
 
 # -- General configuration ---------------------------------------------------
@@ -89,6 +89,9 @@ html_theme = 'nature'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+
+# Custom stylesheet with small readability tweaks.
+html_css_files = ['custom.css']
 
 # Custom sidebar templates, must be a dictionary that maps document names
 # to template names.

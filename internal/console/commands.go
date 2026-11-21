@@ -14,9 +14,9 @@ import (
 	"github.com/elk-language/go-prompt"
 	"github.com/elk-language/go-prompt/completer"
 	"github.com/fatih/color"
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/proto"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/vbauerster/mpb/v8"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -46,11 +46,11 @@ func getServerUri() string {
 }
 
 func ListProjects() *proto.PrjListResponse {
-	client, err := NewClient(getServerUri())
+	client, err := NewClient(getServerUri(), options.ConsoleConfig.Tls)
 	if err != nil {
 		Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 	}
-	defer client.Conn.Close()
+	defer client.Close()
 
 	projects, err := client.Client.ProjectGetMany(context.Background(), &emptypb.Empty{})
 	if err != nil {
@@ -76,11 +76,11 @@ func OpenProject(prjPath string) (string, string, error) {
 		return "", "", err
 	}
 
-	client, err := NewClient(getServerUri())
+	client, err := NewClient(getServerUri(), options.ConsoleConfig.Tls)
 	if err != nil {
 		return "", "", fmt.Errorf("unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 	}
-	defer client.Conn.Close()
+	defer client.Close()
 
 	s := spinner.New(spinner.CharSets[9], 100*time.Millisecond)
 	s.Prefix = "Open project " + filepath.Base(prjPath) + " : "
@@ -136,7 +136,7 @@ func OpenProject(prjPath string) (string, string, error) {
 }
 
 func NewPrompt(prjName, prjID, prjPath string) {
-	e := NewNetemPrompt(getServerUri(), prjID, prjPath)
+	e := NewNetemPrompt(getServerUri(), prjID, prjPath, options.ConsoleConfig)
 	c := NewPromptCompleter(e)
 
 	fmt.Println("")
@@ -180,11 +180,11 @@ var cleanCmd = &cobra.Command{
 			prompt.WithCompleter(ConfirmComplete),
 		)
 		if confirm == "yes" {
-			client, err := NewClient(getServerUri())
+			client, err := NewClient(getServerUri(), options.ConsoleConfig.Tls)
 			if err != nil {
 				Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 			}
-			defer client.Conn.Close()
+			defer client.Close()
 
 			s := spinner.New(spinner.CharSets[9], 100*time.Millisecond)
 			s.Prefix = "Clean command launched: "
@@ -348,11 +348,11 @@ var pullCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		var s *spinner.Spinner
 
-		client, err := NewClient(getServerUri())
+		client, err := NewClient(getServerUri(), options.ConsoleConfig.Tls)
 		if err != nil {
 			Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 		}
-		defer client.Conn.Close()
+		defer client.Close()
 
 		stream, err := client.Client.ServerPullImages(context.Background(), &emptypb.Empty{})
 		if err != nil {
@@ -392,11 +392,11 @@ var updateCmd = &cobra.Command{
 and install it. The server must be restarted to use the new version.`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		client, err := NewClient(getServerUri())
+		client, err := NewClient(getServerUri(), options.ConsoleConfig.Tls)
 		if err != nil {
 			Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 		}
-		defer client.Conn.Close()
+		defer client.Close()
 
 		stream, err := client.Client.ServerUpdate(context.Background(), &emptypb.Empty{})
 		if err != nil {

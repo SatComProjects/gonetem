@@ -1,6 +1,6 @@
 
 syntax = "proto3";
-option go_package = "github.com/mroy31/gonetem/internal/proto";
+option go_package = "github.com/satcomprojects/gonetem/internal/proto";
 
 package netem;
 import "google/protobuf/empty.proto";

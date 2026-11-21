@@ -5,14 +5,18 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/proto"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/proto"
 	"github.com/vishvananda/netns"
 )
 
 type fakeQoSNode struct {
-	fakeStartNode
+	fakeIdentity
 }
+
+func (n *fakeQoSNode) AttachInterface(string, int, bool) error                  { return nil }
+func (n *fakeQoSNode) DetachInterface(string) error                             { return nil }
+func (n *fakeQoSNode) AttachMgntInterface(string, netns.NsHandle, string) error { return nil }
 
 func (n *fakeQoSNode) GetNetns() (netns.NsHandle, error) {
 	return netns.Get()
@@ -30,9 +34,9 @@ func newQoSTestLink(peer1, peer2 *fakeQoSNode) *NetemLink {
 }
 
 func TestLinkUpdateManyGroupsQoSByNode(t *testing.T) {
-	nodeA := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "A"}}
-	nodeB := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "B"}}
-	nodeC := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "C"}}
+	nodeA := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "A"}}
+	nodeB := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "B"}}
+	nodeC := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "C"}}
 	linkAB := newQoSTestLink(nodeA, nodeB)
 	linkAC := newQoSTestLink(nodeA, nodeC)
 
@@ -85,8 +89,8 @@ func TestLinkUpdateManyGroupsQoSByNode(t *testing.T) {
 }
 
 func TestLinkUpdateManyStoppedTopologyUpdatesConfig(t *testing.T) {
-	nodeA := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "A"}}
-	nodeB := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "B"}}
+	nodeA := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "A"}}
+	nodeB := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "B"}}
 	linkAB := newQoSTestLink(nodeA, nodeB)
 	manager := &NetemTopologyManager{links: []*NetemLink{linkAB}}
 
@@ -105,8 +109,8 @@ func TestLinkUpdateManyStoppedTopologyUpdatesConfig(t *testing.T) {
 }
 
 func TestLinkUpdateManyIsolatesPerLinkErrors(t *testing.T) {
-	nodeA := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "A"}}
-	nodeB := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "B"}}
+	nodeA := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "A"}}
+	nodeB := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "B"}}
 	linkAB := newQoSTestLink(nodeA, nodeB)
 	manager := &NetemTopologyManager{links: []*NetemLink{linkAB}}
 
@@ -137,21 +141,14 @@ func TestLinkUpdateManyIsolatesPerLinkErrors(t *testing.T) {
 }
 
 func TestLinkUpdateManyHandlerReportsPerLinkError(t *testing.T) {
-	nodeA := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "A"}}
-	nodeB := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "B"}}
+	nodeA := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "A"}}
+	nodeB := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "B"}}
 	manager := &NetemTopologyManager{links: []*NetemLink{newQoSTestLink(nodeA, nodeB)}}
 
 	prjID := "linkupdatetesterr"
-	projectsMu.Lock()
-	openProjects[prjID] = &NetemProject{Id: prjID, Name: prjID, Topology: manager}
-	projectsMu.Unlock()
-	t.Cleanup(func() {
-		projectsMu.Lock()
-		delete(openProjects, prjID)
-		projectsMu.Unlock()
-	})
+	server := testServerWithProject(t, &NetemProject{Id: prjID, Name: prjID, Topology: manager})
 
-	response, err := (&netemServer{}).LinkUpdateMany(context.Background(), &proto.LinkUpdateManyRequest{
+	response, err := server.LinkUpdateMany(context.Background(), &proto.LinkUpdateManyRequest{
 		PrjId: prjID,
 		Links: []*proto.LinkConfig{{
 			Peer1: "X.0",
@@ -173,21 +170,14 @@ func TestLinkUpdateManyHandlerReportsPerLinkError(t *testing.T) {
 }
 
 func TestLinkUpdateManyHandlerReportsUpdatedCount(t *testing.T) {
-	nodeA := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "A"}}
-	nodeB := &fakeQoSNode{fakeStartNode: fakeStartNode{name: "B"}}
+	nodeA := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "A"}}
+	nodeB := &fakeQoSNode{fakeIdentity: fakeIdentity{name: "B"}}
 	manager := &NetemTopologyManager{links: []*NetemLink{newQoSTestLink(nodeA, nodeB)}}
 
 	prjID := "linkupdatetest"
-	projectsMu.Lock()
-	openProjects[prjID] = &NetemProject{Id: prjID, Name: prjID, Topology: manager}
-	projectsMu.Unlock()
-	t.Cleanup(func() {
-		projectsMu.Lock()
-		delete(openProjects, prjID)
-		projectsMu.Unlock()
-	})
+	server := testServerWithProject(t, &NetemProject{Id: prjID, Name: prjID, Topology: manager})
 
-	response, err := (&netemServer{}).LinkUpdateMany(context.Background(), &proto.LinkUpdateManyRequest{
+	response, err := server.LinkUpdateMany(context.Background(), &proto.LinkUpdateManyRequest{
 		PrjId: prjID,
 		Links: []*proto.LinkConfig{{
 			Peer1: "A.0",

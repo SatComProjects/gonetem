@@ -8,35 +8,58 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/link"
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/testutil"
+	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 const (
 	NODE_TIMEOUT_OP = 10
 )
 
-func skipUnlessRoot(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("Test requires root privileges.")
+func testRuntimeConfig() RuntimeConfig {
+	options.InitServerConfig()
+	return RuntimeConfigFromOptions(options.ServerConfig)
+}
+
+// newDockerNodeForTest injects the shared Docker client into the node.
+func newDockerNodeForTest(prjID, nodeType string, opts DockerNodeOptions) (*DockerNode, error) {
+	client, err := NewDockerClient()
+	if err != nil {
+		return nil, err
 	}
+	return NewDockerNode(client, RuntimeConfigFromOptions(options.ServerConfig), prjID, nodeType, opts)
+}
+
+// requireImageForType checks that the image configured for a node type is
+// present locally. It skips the test when Docker or the image is unavailable.
+func requireImageForType(t *testing.T, nodeType string) {
+	t.Helper()
+	options.InitServerConfig()
+	config, err := RuntimeConfigFromOptions(options.ServerConfig).NodeConfig(nodeType)
+	if err != nil {
+		t.Fatalf("unable to resolve node type %s: %v", nodeType, err)
+	}
+	testutil.RequireImage(t, options.GetDockerImageId(config.Image))
 }
 
 func TestDockerNode_DetachInterface(t *testing.T) {
-	node := &DockerNode{Interfaces: make(map[string]*DockerInterface)}
-	node.Interfaces["eth0"] = &DockerInterface{State: link.IFSTATE_UP}
+	node := newUnitDockerNode(t, &fakeContainerClient{})
+	if err := node.AttachInterface("eth0", 0, false); err != nil {
+		t.Fatalf("AttachInterface returned an error: %v", err)
+	}
 
 	if err := node.DetachInterface("eth0"); err != nil {
 		t.Fatalf("DetachInterface returned an error: %v", err)
 	}
-	if _, ok := node.Interfaces["eth0"]; ok {
+	if _, ok := node.GetInterfacesState()["eth0"]; ok {
 		t.Fatal("interface was not removed from bookkeeping")
 	}
 }
 
 func TestDockerNode_InterfaceMapConcurrentAccess(t *testing.T) {
-	node := &DockerNode{Interfaces: make(map[string]*DockerInterface)}
+	node := newUnitDockerNode(t, &fakeContainerClient{})
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
@@ -86,12 +109,19 @@ func TestDockerNode_ResolvePidCachesResult(t *testing.T) {
 }
 
 func TestDockerNode_InvalidatePid(t *testing.T) {
-	node := &DockerNode{pid: 4242}
+	node := &DockerNode{}
+	if _, err := node.resolvePid(func() (int, error) { return 4242, nil }); err != nil {
+		t.Fatalf("seeding the PID cache failed: %v", err)
+	}
 
 	node.invalidatePid()
 
-	if node.pid != 0 {
-		t.Fatalf("pid was not invalidated: %d", node.pid)
+	pid, err := node.resolvePid(func() (int, error) { return 777, nil })
+	if err != nil {
+		t.Fatalf("resolvePid after invalidation returned an error: %v", err)
+	}
+	if pid != 777 {
+		t.Fatalf("pid after invalidation = %d, want 777", pid)
 	}
 }
 
@@ -99,7 +129,10 @@ func TestDockerNode_GetRunningNetnsUsesCachedPid(t *testing.T) {
 	// A cached PID must be used without falling back to Docker inspection.
 	// Using the test process PID proves the cached path resolves a namespace
 	// while the node has no container ID.
-	node := &DockerNode{pid: os.Getpid()}
+	node := &DockerNode{}
+	if _, err := node.resolvePid(func() (int, error) { return os.Getpid(), nil }); err != nil {
+		t.Fatalf("seeding the PID cache failed: %v", err)
+	}
 
 	ns, err := node.GetRunningNetns()
 	if err != nil {
@@ -114,7 +147,7 @@ func BenchmarkDockerNode_RunCommandPidCache(b *testing.B) {
 	}
 
 	options.InitServerConfig()
-	node, err := NewDockerNode(utils.RandString(4), "host", DockerNodeOptions{
+	node, err := newDockerNodeForTest(utils.RandString(4), "host", DockerNodeOptions{
 		Name: utils.RandString(6),
 	})
 	if err != nil {
@@ -161,7 +194,8 @@ func TestVRRPInterfaceNameIncludesGroup(t *testing.T) {
 
 func TestDockerNode_LazyCreation(t *testing.T) {
 	options.InitServerConfig()
-	node, err := NewDockerNode(utils.RandString(4), "host", DockerNodeOptions{
+	requireImageForType(t, "host")
+	node, err := newDockerNodeForTest(utils.RandString(4), "host", DockerNodeOptions{
 		Name:       utils.RandString(6),
 		LazyCreate: true,
 	})
@@ -189,8 +223,9 @@ func TestDockerNode_LazyCreation(t *testing.T) {
 
 func TestDockerNode_StartStopWithoutInterfaces(t *testing.T) {
 	options.InitServerConfig()
+	requireImageForType(t, "host")
 	prjID := utils.RandString(4)
-	node, err := NewDockerNode(prjID, "host", DockerNodeOptions{
+	node, err := newDockerNodeForTest(prjID, "host", DockerNodeOptions{
 		Name: utils.RandString(6),
 	})
 	if err != nil {
@@ -214,9 +249,10 @@ func TestDockerNode_StartStopWithoutInterfaces(t *testing.T) {
 }
 
 func TestDockerNode_StartStop(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "host")
 	tests := []struct {
 		desc        string
 		name        string
@@ -243,6 +279,9 @@ func TestDockerNode_StartStop(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
+			if tt.mpls {
+				testutil.RequireMPLS(t)
+			}
 			prjID := utils.RandString(4)
 			options := DockerNodeOptions{
 				Name: tt.name,
@@ -250,7 +289,7 @@ func TestDockerNode_StartStop(t *testing.T) {
 				Mpls: tt.mpls,
 			}
 
-			node, err := NewDockerNode(prjID, tt.nType, options)
+			node, err := newDockerNodeForTest(prjID, tt.nType, options)
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("An error is expected but it is not occurred")
@@ -282,15 +321,16 @@ func TestDockerNode_StartStop(t *testing.T) {
 }
 
 func TestDockerNode_Copy(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "router")
 	prjID := utils.RandString(4)
 	config := DockerNodeOptions{
 		Name: utils.RandString(3),
 	}
 
-	node, err := NewDockerNode(prjID, "router", config)
+	node, err := newDockerNodeForTest(prjID, "router", config)
 	if err != nil {
 		t.Errorf("Unable to create docker node: %v", err)
 		return
@@ -318,9 +358,12 @@ func TestDockerNode_Copy(t *testing.T) {
 }
 
 func TestDockerNode_ReadConfigFiles(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "host")
+	requireImageForType(t, "server")
+	requireImageForType(t, "router")
 	prefix := utils.RandString(3)
 	tests := []struct {
 		desc          string
@@ -355,7 +398,7 @@ func TestDockerNode_ReadConfigFiles(t *testing.T) {
 				Name: tt.name,
 			}
 
-			node, err := NewDockerNode(prjID, tt.nType, config)
+			node, err := newDockerNodeForTest(prjID, tt.nType, config)
 			if err != nil {
 				t.Fatalf("Unable to create docker node: %v", err)
 			}
@@ -389,9 +432,12 @@ func TestDockerNode_ReadConfigFiles(t *testing.T) {
 }
 
 func TestDockerNode_Save(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "host")
+	requireImageForType(t, "server")
+	requireImageForType(t, "router")
 	prefix := utils.RandString(3)
 	tests := []struct {
 		desc      string
@@ -429,6 +475,9 @@ func TestDockerNode_Save(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
+			if tt.mpls {
+				testutil.RequireMPLS(t)
+			}
 			prjID := utils.RandString(4)
 			config := DockerNodeOptions{
 				Name: tt.name,
@@ -436,7 +485,7 @@ func TestDockerNode_Save(t *testing.T) {
 				Mpls: tt.mpls,
 			}
 
-			node, err := NewDockerNode(prjID, tt.nType, config)
+			node, err := newDockerNodeForTest(prjID, tt.nType, config)
 			if err != nil {
 				t.Errorf("Unable to create docker node: %v", err)
 				return
@@ -479,15 +528,16 @@ func TestDockerNode_Save(t *testing.T) {
 }
 
 func TestDockerNode_AttachLink(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "router")
 	prjID := utils.RandString(4)
 	// Create 2 nodes and create a link between
 	config := DockerNodeOptions{
 		Name: utils.RandString(3),
 	}
-	node1, err := NewDockerNode(prjID, "router", config)
+	node1, err := newDockerNodeForTest(prjID, "router", config)
 	if err != nil {
 		t.Fatalf("Unable to create docker node: %v", err)
 	}
@@ -496,7 +546,7 @@ func TestDockerNode_AttachLink(t *testing.T) {
 	config = DockerNodeOptions{
 		Name: utils.RandString(3),
 	}
-	node2, err := NewDockerNode(prjID, "host", config)
+	node2, err := newDockerNodeForTest(prjID, "host", config)
 	if err != nil {
 		t.Fatalf("Unable to create docker node: %v", err)
 	}
@@ -531,9 +581,10 @@ func TestDockerNode_AttachLink(t *testing.T) {
 }
 
 func TestDockerNode_ImageOverride(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "host")
 	prjID := utils.RandString(4)
 
 	overrideImage := options.ServerConfig.Docker.Nodes.Host.Image
@@ -559,7 +610,7 @@ func TestDockerNode_ImageOverride(t *testing.T) {
 		Name:  utils.RandString(3),
 		Image: overrideImage,
 	}
-	node, err := NewDockerNode(prjID, "router", config)
+	node, err := newDockerNodeForTest(prjID, "router", config)
 	if err != nil {
 		t.Fatalf("Unable to create docker node: %v", err)
 	}
@@ -576,9 +627,10 @@ func TestDockerNode_ImageOverride(t *testing.T) {
 }
 
 func TestDockerNode_Volumes(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	options.InitServerConfig()
+	requireImageForType(t, "host")
 	prjID := utils.RandString(4)
 
 	// Create 1 host node
@@ -586,7 +638,7 @@ func TestDockerNode_Volumes(t *testing.T) {
 		Name:    utils.RandString(3),
 		Volumes: []string{"/tmp:/tmp/volume"},
 	}
-	node, err := NewDockerNode(prjID, "host", config)
+	node, err := newDockerNodeForTest(prjID, "host", config)
 	if err != nil {
 		t.Fatalf("Unable to create docker node: %v", err)
 	}

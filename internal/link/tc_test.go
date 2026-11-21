@@ -6,7 +6,8 @@ import (
 
 	"github.com/florianl/go-tc"
 	"github.com/florianl/go-tc/core"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/testutil"
+	"github.com/satcomprojects/gonetem/internal/utils"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )
@@ -67,7 +68,7 @@ func listQdiscKinds(t *testing.T, ns netns.NsHandle, ifName string) map[string]i
 }
 
 func TestResetQdiscsIsIdempotent(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	ns, teardown := setUpNetlinkTest(t)
 	defer teardown()
@@ -87,7 +88,7 @@ func TestResetQdiscsIsIdempotent(t *testing.T) {
 }
 
 func TestApplyQoSInstallsAndClearsQdiscs(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	ns, teardown := setUpNetlinkTest(t)
 	defer teardown()
@@ -155,11 +156,11 @@ func TestNetemQdiscUsesQueueLimit(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			qdisc, err := netemQdisc(dev, 10, 1, 0.5, tc.limit, RootHandle, RootParent)
+			qdisc, err := netemQdisc(dev, 10, 1, 0.5, tc.limit, rootHandle(), rootParent())
 			if err != nil {
 				t.Fatalf("netemQdisc returned an error: %v", err)
 			}
-			if got := qdisc.Attribute.Netem.Qopt.Limit; got != tc.want {
+			if got := qdisc.Netem.Qopt.Limit; got != tc.want {
 				t.Fatalf("netem limit = %d, expected %d", got, tc.want)
 			}
 		})

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 
 	"github.com/fatih/color"
 )
@@ -20,16 +19,25 @@ func CmdErrLogger(pipe io.ReadCloser) {
 			return
 		}
 
-		fmt.Print(color.YellowString(string(output)))
+		fmt.Print(color.YellowString(output))
 	}
 }
 
 func EditFile(filename, editor string) error {
-	cmd := exec.Command(editor, filename)
+	return editFileWithRunner(filename, editor, execToolRunner{})
+}
+
+func editFileWithRunner(filename, editor string, tools ToolRunner) error {
+	var stdin io.Reader
+	var stdout io.Writer
 	if editor == "vi" || editor == "vim" || editor == "nano" {
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
+		stdin = os.Stdin
+		stdout = os.Stdout
 	}
 
-	return cmd.Run()
+	proc, err := tools.Start(editor, []string{filename}, stdin, stdout, nil)
+	if err != nil {
+		return err
+	}
+	return proc.Wait()
 }

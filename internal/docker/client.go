@@ -13,14 +13,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/docker/docker/api/types"
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/moby/term"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/utils"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/singleflight"
 )
@@ -151,16 +151,16 @@ func (c *DockerClient) List(ctx context.Context, prefix string) ([]NetemContaine
 	return result, nil
 }
 
-func (c *DockerClient) Get(ctx context.Context, containerId string) (*types.Container, error) {
+func (c *DockerClient) Get(ctx context.Context, containerId string) (*container.Summary, error) {
 	containerInfo, err := c.cli.ContainerInspect(ctx, containerId)
 	if err != nil {
-		if client.IsErrNotFound(err) {
+		if errdefs.IsNotFound(err) {
 			return nil, fmt.Errorf("container with id %s does not exist", containerId)
 		}
 		return nil, err
 	}
 
-	cSummary := &types.Container{
+	cSummary := &container.Summary{
 		ID:    containerInfo.ID,
 		Names: []string{containerInfo.Name},
 		State: containerInfo.State.Status,
@@ -241,7 +241,7 @@ func (c *DockerClient) Stop(ctx context.Context, containerId string) error {
 
 func (c *DockerClient) Rm(ctx context.Context, containerId string) error {
 	err := c.cli.ContainerRemove(ctx, containerId, container.RemoveOptions{Force: true})
-	if err != nil && client.IsErrNotFound(err) {
+	if err != nil && errdefs.IsNotFound(err) {
 		// Cleanup and project close are idempotent.
 		return nil
 	}
@@ -346,8 +346,8 @@ func (c *DockerClient) CopyTo(ctx context.Context, containerId, source, dest str
 			pWriter.CloseWithError(err)
 			return
 		}
-		tarWriter.Close()
-		pWriter.Close()
+		_ = tarWriter.Close()
+		_ = pWriter.Close()
 	}()
 
 	return c.cli.CopyToContainer(
@@ -539,9 +539,14 @@ func (c *DockerClient) ExecTty(
 		}
 		break
 
-	case <-inputDone:
-		// Input stream has closed.
-		// Wait for output to complete streaming.
+	case inputErr := <-inputDone:
+		// Input stream has closed. Errors from copying stdin are usually the
+		// consequence of the command exiting; log them and wait for output to
+		// complete streaming.
+		if inputErr != nil && !errors.Is(inputErr, io.EOF) {
+			logrus.WithField("container", containerId).Debugf(
+				"exec input stream closed: %v", inputErr)
+		}
 		select {
 		case err := <-outputDone:
 			if err != nil {

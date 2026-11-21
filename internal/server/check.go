@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mroy31/gonetem/internal/link"
+	"github.com/satcomprojects/gonetem/internal/link"
 	"gopkg.in/yaml.v3"
 )
 

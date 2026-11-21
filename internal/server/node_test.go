@@ -4,11 +4,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 func TestCreateNamespaceNode(t *testing.T) {
-	node, err := CreateNode(utils.RandString(8), "ns1", "n1", NodeConfig{Type: "namespace"})
+	node, err := (&NodeFactory{}).Create(utils.RandString(8), "ns1", "n1", NodeConfig{Type: "namespace"})
 	if err != nil {
 		t.Fatalf("CreateNode returned an error: %v", err)
 	}

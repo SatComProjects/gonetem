@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mroy31/gonetem/internal/options"
-	"github.com/mroy31/gonetem/internal/utils"
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 func createProject(filepath string, topo TopologyTestData) error {
@@ -21,31 +21,22 @@ func createProject(filepath string, topo TopologyTestData) error {
 func TestProject_OpenClose(t *testing.T) {
 	options.InitServerConfig()
 
-	prjPath := "/tmp/prjtest-archive.gnet"
-	if err := createProject(prjPath, simpleNetwork); err != nil {
-		t.Fatalf("Unable to create .gnet file: %v", err)
-	}
-	defer os.Remove(prjPath)
-
-	data, err := os.ReadFile(prjPath)
-	if err != nil {
-		t.Fatalf("Unable to open created .gnet file: %v", err)
-	}
-
-	// open project
+	// open a project built from namespace nodes: no images or privileges are
+	// needed until the topology is started.
 	prjID := utils.RandString(4)
-	project, err := ProjectOpen(prjID, "PrjTest", data)
+	registry := newTestRegistry()
+	project, err := registry.Open(prjID, "PrjTest", createProjectArchive(t, namespaceNetwork))
 	if err != nil {
 		t.Fatalf("Unable to open project: %v", err)
 	}
-	defer ProjectClose(prjID, nil)
+	defer registry.Close(prjID, nil)
 
 	// check topology
-	checkTopology(simpleNetwork, project.Topology, t)
+	checkTopology(namespaceNetwork, project.Topology, t)
 }
 
 func TestProject_Save(t *testing.T) {
-	options.InitServerConfig()
+	requireSimpleNetworkCapabilities(t)
 
 	prjPath := "/tmp/prjtest-archive.gnet"
 	if err := createProject(prjPath, simpleNetwork); err != nil {
@@ -62,12 +53,13 @@ func TestProject_Save(t *testing.T) {
 
 	// open project
 	prjID := utils.RandString(4)
-	project, err := ProjectOpen(prjID, "PrjTest", data)
+	registry := newTestRegistry()
+	project, err := registry.Open(prjID, "PrjTest", data)
 	if err != nil {
 		t.Errorf("Unable to open project: %v", err)
 		return
 	}
-	defer ProjectClose(prjID, nil)
+	defer registry.Close(prjID, nil)
 
 	if _, err := project.Topology.Run(nil); err != nil {
 		t.Errorf("Unable to start project: %v", err)
