@@ -379,13 +379,16 @@ func qosDiff(old, next QoSConfig, hasTbf, hasNetem bool) (reset, changeTbf, chan
 	return reset, changeTbf, changeNetem, true
 }
 
-func applyPeerQoSDiff(ifName string, ns netns.NsHandle, old, next QoSConfig, hasTbf, hasNetem *bool) error {
+func applyPeerQoSDiff(applier QoSApplier, ifName string, ns netns.NsHandle, old, next QoSConfig, hasTbf, hasNetem *bool) error {
 	reset, changeTbf, changeNetem, changed := qosDiff(old, next, *hasTbf, *hasNetem)
 	if !changed {
 		return nil
 	}
 
-	updatedTbf, updatedNetem, err := link.ApplyQoS(
+	if applier == nil {
+		applier = link.ApplyQoS
+	}
+	updatedTbf, updatedNetem, err := applier(
 		ifName, ns, toLinkQoS(next), reset, changeTbf, changeNetem,
 	)
 	if err != nil {
@@ -410,9 +413,9 @@ func toLinkQoS(q QoSConfig) link.QoS {
 	}
 }
 
-func (l *NetemLink) ApplyPeer1QoS(ifName string, ns netns.NsHandle, reset bool) error {
+func (l *NetemLink) ApplyPeer1QoS(applier QoSApplier, ifName string, ns netns.NsHandle, reset bool) error {
 	q := l.Config.GetPeer1QoS()
-	hasTbf, hasNetem, err := link.ApplyQoS(
+	hasTbf, hasNetem, err := applier(
 		ifName, ns, toLinkQoS(q), reset, l.HasPeer1Tbf, l.HasPeer1Netem,
 	)
 	if err != nil {
@@ -423,9 +426,9 @@ func (l *NetemLink) ApplyPeer1QoS(ifName string, ns netns.NsHandle, reset bool) 
 	return nil
 }
 
-func (l *NetemLink) ApplyPeer2QoS(ifName string, ns netns.NsHandle, reset bool) error {
+func (l *NetemLink) ApplyPeer2QoS(applier QoSApplier, ifName string, ns netns.NsHandle, reset bool) error {
 	q := l.Config.GetPeer2QoS()
-	hasTbf, hasNetem, err := link.ApplyQoS(
+	hasTbf, hasNetem, err := applier(
 		ifName, ns, toLinkQoS(q), reset, l.HasPeer2Tbf, l.HasPeer2Netem,
 	)
 	if err != nil {
@@ -547,6 +550,8 @@ type NetemTopologyManager struct {
 	// the same links in opposite order could deadlock. Adds/deletes do not take
 	// this mutex and remain concurrent with updates.
 	updateBatchMu sync.Mutex
+	// qosApplier is injectable for tests. Production uses link.ApplyQoS.
+	qosApplier QoSApplier
 	// qosBatchApplier is injectable for tests. Production uses link.ApplyQoSBatch.
 	qosBatchApplier func(netns.NsHandle, []link.QoSOperation) ([]link.QoSOperationResult, error)
 	// nodeFactory is injectable for tests. Production uses NodeFactory.
@@ -558,6 +563,19 @@ type NetemTopologyManager struct {
 
 // createNode builds a node through the injected factory when one is set.
 // Tests use this seam to exercise topology loading without Docker or root.
+// QoSApplier applies qdisc changes for one link direction. It is declared by
+// the server so tests can replace the kernel-facing implementation.
+type QoSApplier func(ifName string, ns netns.NsHandle, q link.QoS, reset, changeTbf, changeNetem bool) (hasTbf, hasNetem bool, err error)
+
+// applyQoS uses the injected applier, falling back to the link package.
+func (t *NetemTopologyManager) applyQoS(ifName string, ns netns.NsHandle, q link.QoS, reset, changeTbf, changeNetem bool) (bool, bool, error) {
+	applier := t.qosApplier
+	if applier == nil {
+		applier = link.ApplyQoS
+	}
+	return applier(ifName, ns, q, reset, changeTbf, changeNetem)
+}
+
 func (t *NetemTopologyManager) createNode(name, shortName string, config NodeConfig) (Node, error) {
 	if t.nodeFactory != nil {
 		return t.nodeFactory(t.prjID, name, shortName, config)
@@ -1242,10 +1260,10 @@ func (t *NetemTopologyManager) setupLink(l *NetemLink, configure bool, netnsCach
 	}
 
 	// apply both qdiscs with one namespace transition/socket per peer
-	if err := l.ApplyPeer1QoS(peer1IfName, peer1Netns, false); err != nil {
+	if err := l.ApplyPeer1QoS(t.applyQoS, peer1IfName, peer1Netns, false); err != nil {
 		return err
 	}
-	if err := l.ApplyPeer2QoS(peer2IfName, peer2Netns, false); err != nil {
+	if err := l.ApplyPeer2QoS(t.applyQoS, peer2IfName, peer2Netns, false); err != nil {
 		return err
 	}
 
@@ -1730,6 +1748,7 @@ func (t *NetemTopologyManager) linkUpdate(linkCfg LinkConfig, netnsCache *nodeNe
 
 		peer1IfName := l.Peer1.Node.GetInterfaceName(l.Peer1.IfIndex)
 		if err := applyPeerQoSDiff(
+			t.applyQoS,
 			peer1IfName, peer1Netns, oldPeer1, newPeer1,
 			&l.HasPeer1Tbf, &l.HasPeer1Netem,
 		); err != nil {
@@ -1745,6 +1764,7 @@ func (t *NetemTopologyManager) linkUpdate(linkCfg LinkConfig, netnsCache *nodeNe
 
 		peer2IfName := l.Peer2.Node.GetInterfaceName(l.Peer2.IfIndex)
 		if err := applyPeerQoSDiff(
+			t.applyQoS,
 			peer2IfName, peer2Netns, oldPeer2, newPeer2,
 			&l.HasPeer2Tbf, &l.HasPeer2Netem,
 		); err != nil {
