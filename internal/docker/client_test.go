@@ -185,6 +185,7 @@ func TestDockerClient_RmMissingIsNoop(t *testing.T) {
 
 func TestDockerClient_CreateRm(t *testing.T) {
 	testutil.RequireRoot(t)
+	testutil.RequireMPLS(t)
 	client, cID, _, teardown := setupContainer(t, IMG_HOST)
 	defer teardown()
 
@@ -221,6 +222,7 @@ func TestDockerClient_CreateRm(t *testing.T) {
 
 func TestDockerClient_Exec(t *testing.T) {
 	testutil.RequireRoot(t)
+	testutil.RequireMPLS(t)
 	client, cID, name, teardown := setupStartedContainer(t, IMG_SERVER)
 	defer teardown()
 
@@ -272,6 +274,7 @@ func TestDockerClient_Copy(t *testing.T) {
 
 func TestDockerClient_Pid(t *testing.T) {
 	testutil.RequireRoot(t)
+	testutil.RequireMPLS(t)
 	client, cID, _, teardown := setupContainer(t, IMG_ROUTER)
 	defer teardown()
 

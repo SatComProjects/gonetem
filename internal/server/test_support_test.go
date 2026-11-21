@@ -28,6 +28,7 @@ func requireSimpleNetworkCapabilities(t *testing.T) {
 	t.Helper()
 	options.InitServerConfig()
 	testutil.RequireRoot(t)
+	testutil.RequireMPLS(t)
 	requireDockerImage(t, options.ServerConfig.Docker.Nodes.Router.Image)
 	requireDockerImage(t, options.ServerConfig.Docker.Nodes.Host.Image)
 	requireDockerImage(t, options.ServerConfig.Docker.OvsImage)
@@ -37,6 +38,7 @@ func requireRouterCapabilities(t *testing.T) {
 	t.Helper()
 	options.InitServerConfig()
 	testutil.RequireRoot(t)
+	testutil.RequireMPLS(t)
 	requireDockerImage(t, options.ServerConfig.Docker.Nodes.Router.Image)
 }
 

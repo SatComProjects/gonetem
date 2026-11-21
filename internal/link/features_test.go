@@ -94,6 +94,7 @@ func TestPrepareInterfacesEnablesMplsInput(t *testing.T) {
 
 	ns, teardown := setUpNetlinkTest(t)
 	defer teardown()
+	testutil.RequireMPLS(t)
 
 	const ifName = "ethmpls0"
 	if _, err := CreateVethLink(ifName, ns, "ethmpls1", ns); err != nil {
