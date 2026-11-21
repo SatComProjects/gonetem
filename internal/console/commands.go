@@ -50,7 +50,7 @@ func ListProjects() *proto.PrjListResponse {
 	if err != nil {
 		Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 	}
-	defer client.Conn.Close()
+	defer client.Close()
 
 	projects, err := client.Client.ProjectGetMany(context.Background(), &emptypb.Empty{})
 	if err != nil {
@@ -80,7 +80,7 @@ func OpenProject(prjPath string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 	}
-	defer client.Conn.Close()
+	defer client.Close()
 
 	s := spinner.New(spinner.CharSets[9], 100*time.Millisecond)
 	s.Prefix = "Open project " + filepath.Base(prjPath) + " : "
@@ -184,7 +184,7 @@ var cleanCmd = &cobra.Command{
 			if err != nil {
 				Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 			}
-			defer client.Conn.Close()
+			defer client.Close()
 
 			s := spinner.New(spinner.CharSets[9], 100*time.Millisecond)
 			s.Prefix = "Clean command launched: "
@@ -352,7 +352,7 @@ var pullCmd = &cobra.Command{
 		if err != nil {
 			Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 		}
-		defer client.Conn.Close()
+		defer client.Close()
 
 		stream, err := client.Client.ServerPullImages(context.Background(), &emptypb.Empty{})
 		if err != nil {
@@ -396,7 +396,7 @@ and install it. The server must be restarted to use the new version.`,
 		if err != nil {
 			Fatal("Unable to connect to server identified by uri '%s'\n\t%v", getServerUri(), err)
 		}
-		defer client.Conn.Close()
+		defer client.Close()
 
 		stream, err := client.Client.ServerUpdate(context.Background(), &emptypb.Empty{})
 		if err != nil {
