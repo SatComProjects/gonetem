@@ -8,8 +8,12 @@ and AI agents must also follow [`AGENTS.md`](AGENTS.md).
 
 ## Quick start
 
-Requirements: Go 1.24+, GNU Make, Docker, and a Linux host. Root is required
-for the server and for kernel-level tests.
+Requirements: Go 1.24+, GNU Make, `golangci-lint` v2.15+, Docker, and a Linux
+host. Root is required for the server and for kernel-level tests.
+
+```bash
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+```
 
 ```bash
 git clone https://github.com/satcomprojects/gonetem.git

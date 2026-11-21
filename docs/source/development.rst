@@ -17,8 +17,16 @@ Environment
 
 Required:
 
-* Go **1.24+**;
+* Go **1.24+** (the version declared in ``go.mod``);
 * GNU Make;
+* ``golangci-lint`` v2.15+ — required by ``make check`` and CI:
+
+  .. code-block:: bash
+
+     go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+
+* optionally ``govulncheck`` (``make govulncheck``) and ``actionlint`` (when
+  changing workflows);
 * Docker Engine (for node tests and manual testing);
 * `protoc` with ``protoc-gen-go`` and ``protoc-gen-go-grpc`` (only when changing
   the API);
