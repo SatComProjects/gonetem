@@ -8,7 +8,7 @@ and AI agents must also follow [`AGENTS.md`](AGENTS.md).
 
 ## Quick start
 
-Requirements: Go 1.24+, GNU Make, `golangci-lint` v2.15+, Docker, and a Linux
+Requirements: Go 1.27.4+, GNU Make, `golangci-lint` v2.15+, Docker, and a Linux
 host. Root is required for the server and for kernel-level tests.
 
 ```bash
@@ -111,13 +111,13 @@ Required checks on pull requests:
 - Unit tests: `go test -short -race`, coverage artifact.
 - Build: both binaries.
 - Docs: Sphinx with warnings as errors.
+- Vulnerability scan: `make govulncheck`. Only reviewed exceptions in
+  `.govulncheck-allow` are accepted; add one only with a written justification.
 
-`govulncheck` runs on every pull request but is advisory during the Phase 0
-baseline; it becomes blocking in the hardening phase. The privileged
-integration suite is defined for nightly/manual runs and activates on the
-default branch after the next `master` release; until then run
-`make test-integration` locally.
-Do not bypass a failing check; fix the cause or document a reviewed exception.
+The privileged integration suite is defined for nightly/manual runs and
+activates on the default branch after the next `master` release; until then run
+`make test-integration` locally. Do not bypass a failing check; fix the cause or
+document a reviewed exception.
 
 ## Commits and pull requests
 

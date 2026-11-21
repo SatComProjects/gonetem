@@ -93,21 +93,15 @@ jobs:
         run: sphinx-build -E -n -W -b html docs/source docs/build/html
 
   govulncheck:
-    name: Vulnerability scan (advisory)
+    name: Vulnerability scan
     runs-on: ubuntu-latest
-    # Phase 0 is advisory: the baseline toolchain and dependencies already have
-    # reachable advisories. Phase 9 upgrades the toolchain/dependencies and makes
-    # this job a required gate.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          # The scanner itself needs a newer toolchain than the module's
-          # minimum; this job only analyses, it does not build the project.
-          go-version: stable
+          go-version-file: go.mod
           cache: true
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
       - name: Scan dependencies and call graphs
-        run: govulncheck ./...
+        run: ./scripts/check-vulnerabilities.sh
