@@ -796,6 +796,17 @@ func toppologyRunProgressGoroutine(
 	}
 }
 
+func toProtoNodeMessages(messages []NodeRunMessages) []*proto.TopologyRunMsg_NodeMessages {
+	converted := make([]*proto.TopologyRunMsg_NodeMessages, len(messages))
+	for idx, message := range messages {
+		converted[idx] = &proto.TopologyRunMsg_NodeMessages{
+			Name:     message.Name,
+			Messages: append([]string(nil), message.Messages...),
+		}
+	}
+	return converted
+}
+
 func (s *netemServer) TopologyRun(request *proto.ProjectRequest, stream proto.Netem_TopologyRunServer) error {
 	project := ProjectGetOne(request.GetId())
 	if project == nil {
@@ -815,7 +826,7 @@ func (s *netemServer) TopologyRun(request *proto.ProjectRequest, stream proto.Ne
 
 	if err := stream.Send(&proto.TopologyRunMsg{
 		Code:         proto.TopologyRunMsg_NODE_MESSAGES,
-		NodeMessages: nodeMessages,
+		NodeMessages: toProtoNodeMessages(nodeMessages),
 	}); err != nil {
 		return err
 	}
@@ -841,7 +852,7 @@ func (s *netemServer) TopologyReload(request *proto.ProjectRequest, stream proto
 
 	if err := stream.Send(&proto.TopologyRunMsg{
 		Code:         proto.TopologyRunMsg_NODE_MESSAGES,
-		NodeMessages: nodeMessages,
+		NodeMessages: toProtoNodeMessages(nodeMessages),
 	}); err != nil {
 		return err
 	}
