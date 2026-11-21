@@ -557,6 +557,13 @@ state, orchestration and persistence, with explicit dependencies.
 Phase 6 - gRPC services and project registry
 --------------------------------------------
 
+**Status: complete (2026-11-21).** Delivered the service split
+(``service_server/project/topology/node/link.go``, ``convert.go``), an
+instance-based ``ProjectRegistry`` with archive/filesystem work moved out of the
+handlers, no package-level project map, per-server update mutex, conversion
+table tests and bufconn not-found/invalid/partial-result coverage. Server
+coverage is 64.3 %.
+
 **Goal.** Thin, testable transport handlers and an explicit project registry.
 
 **Work items.**
@@ -704,8 +711,8 @@ Metrics and ratchets
      - Keep it hermetic as packages split
    * - Unit coverage (non-generated)
      - 26.5 % after Phase 0
-     - Phase 5 ratchet: 43.5 % total, 62 % server, 34 % Docker,
-       52 % namespace, 12 % link, 83 % OVS (measured 44.0/62.8/34.7/53.2/12.4/84.1)
+     - Phase 6 ratchet: 44 % total, 63.5 % server, 34 % Docker,
+       52 % namespace, 12 % link, 83 % OVS (measured 44.7/64.3/34.7/53.2/12.4/84.1)
      - At least 60 % total; 80 to 90 % for critical pure logic
    * - Race detector
      - Passes on packages that run
@@ -837,8 +844,8 @@ Phase status
      - Complete (2026-11-21)
      - Topology responsibility split, domain progress, persistence goldens, lock order.
    * - 6
-     - Planned
-     - gRPC services and project registry.
+     - Complete (2026-11-21)
+     - Service split, ProjectRegistry, conversion layer, bufconn error/partial tests.
    * - 7
      - Planned
      - Console command model.

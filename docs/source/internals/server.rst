@@ -19,7 +19,7 @@ Startup
 #. **configuration** — built-in defaults are loaded, then the configuration
    file is parsed if it exists (missing file: warning, defaults are used);
 #. **signal handling** — ``SIGINT`` and ``SIGTERM`` cancel the root context;
-#. **server construction** — ``server.NewServer()`` (an empty service struct);
+#. **server construction** — ``server.NewServer()`` (creates the Docker client and an empty project registry);
 #. **gRPC listener** in a goroutine:
 
    * TLS credentials are loaded if ``tls.enabled``; a failure exits with
@@ -44,8 +44,8 @@ Service layer
 -------------
 
 ``netemServer`` embeds ``proto.UnimplementedNetemServer`` so new RPCs added to
-the proto do not break the build until implemented. It carries one injectable
-field:
+the proto do not break the build until implemented. It carries the injected
+collaborators:
 
 .. code-block:: go
 
@@ -53,21 +53,31 @@ field:
        proto.UnimplementedNetemServer
        routeApplier func(context.Context, RouteNode, []link.RouteSpec) (int, error)
        dockerClient docker.ContainerAPI
+       projects     *ProjectRegistry
    }
 
 ``routeApplier`` is a test seam for ``RouteInstall``; production uses
 ``applyRoutesToNode``. ``dockerClient`` is injected by ``NewServer`` and is used
-by the image-pull and container-clean handlers; bare test servers fall back to
-the shared client. Similar seams exist inside the topology manager for qdisc
-batches (``qosBatchApplier``) and node creation (``nodeFactory``/``ovsFactory``).
+by the image-pull and container-clean handlers. ``projects`` is the per-server
+registry (next section). Similar seams exist inside the topology manager for
+qdisc batches (``qosBatchApplier``) and node creation (``nodeFactory``/``ovsFactory``).
+
+The handlers are split by service area:
+
+* ``service_server.go`` — version, clean, pull, update;
+* ``service_project.go`` — project list/open/close/save/status/network file;
+* ``service_topology.go`` — run/reload/start-all/stop-all/check and progress;
+* ``service_node.go`` — node lifecycle, console/exec/capture/copy;
+* ``service_link.go`` — link add/delete/update/batch/sync;
+* ``convert.go`` — protobuf ↔ domain conversions;
+* ``server.go`` — registration type, close, construction.
 
 Handlers are thin by design. They:
 
-#. look up the project (``ProjectGetOne``) and return a
-   ``ProjectNotFoundError`` gRPC error when absent;
-#. convert protobuf messages to internal structures
-   (``getLinkConfig``, ``getNodeConfigFromRequest``, ``routeSpecsFromProto``,
-   ``linkSyncActionFromProto``);
+#. look up the project in ``s.projects`` and return a ``ProjectNotFoundError``
+   gRPC error when absent;
+#. convert protobuf messages to internal structures (``convert.go``,
+   ``routeSpecsFromProto``);
 #. delegate to a topology manager method;
 #. convert results back, including per-item statuses for batch RPCs.
 
@@ -79,26 +89,27 @@ separately.
 Project registry
 ----------------
 
-``internal/server/project.go`` holds:
+``internal/server/project_registry.go`` owns the open-project set. Each
+``netemServer`` has its own instance; there is no package-level project map.
 
 .. code-block:: go
 
-   var (
-       openProjects = make(map[string]*NetemProject)
-       projectsMu   sync.RWMutex
-       projectOpsMu sync.Mutex
-   )
+   type ProjectRegistry struct {
+       mu       sync.RWMutex
+       opsMu    sync.Mutex
+       projects map[string]*NetemProject
+   }
 
-* ``projectsMu`` guards the map; reads (``ProjectGetOne``, ``ProjectGetMany``,
-  ``ProjectIsExist``, ``ProjectIsIdExist``) take the read lock.
-* ``projectOpsMu`` serialises open, save, get-configs and close, so a project
-  cannot be saved while it is closing.
-* ``ProjectOpen`` additionally checks name uniqueness before and after creating
-  the project object, returns an error if the ID or name was taken.
-* ``ProjectSave`` returns the archive as a ``bytes.Buffer`` while holding
-  ``projectOpsMu``.
-* ``ProjectClose`` closes the topology, deletes the registry entry, then removes
-  the temporary directory (even when the topology close returned an error).
+* ``mu`` guards the map; ``Has``/``Get``/``Snapshot``/``IsNameOpen`` take the
+  read lock. ``Add``/``Remove`` are used by tests and internal setup.
+* ``opsMu`` serialises open/save/get-configs/close, so a project cannot be
+  saved while it is closing.
+* ``Open`` checks name uniqueness before and after creating the project object
+  and returns an error if the ID or name was taken.
+* ``Save`` synchronises node configuration and returns the archive buffer while
+  holding ``opsMu``.
+* ``Close`` closes the topology, deletes the registry entry, then removes the
+  temporary directory (even when the topology close returned an error).
 
 Project IDs are generated with ``utils.RandString(3)`` and retried until they
 are unique among open projects.

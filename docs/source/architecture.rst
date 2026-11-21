@@ -223,7 +223,7 @@ A typical ``exec`` from the prompt:
    prompt "exec R1 \"ip addr show\""
      -> new gRPC connection to the server
      -> Server.NodeExec (bidi stream)
-        -> ProjectGetOne(prjId)                  (registry read lock)
+        -> s.projects.Get(prjId)                 (registry read lock)
         -> Topology.GetNode("R1")                (topology read lock)
         -> DockerNode.ExecCommand
            -> DockerClient.ExecTty
@@ -257,9 +257,9 @@ Concurrency model (summary)
 
    * - Mechanism
      - Purpose
-   * - ``projectsMu`` (RWMutex)
-     - Protects the open-project registry (reads dominate).
-   * - ``projectOpsMu`` (Mutex)
+   * - ``ProjectRegistry.mu`` (RWMutex)
+     - Protects the per-server open-project registry (reads dominate).
+   * - ``ProjectRegistry.opsMu`` (Mutex)
      - Serialises open/save/close/get-config operations.
    * - topology ``mu`` (RWMutex)
      - Protects the topology data structures (nodes, links, bridges,
