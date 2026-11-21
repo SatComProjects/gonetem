@@ -148,8 +148,8 @@ Rules:
   and relevant output.
 * Keep changes small and scoped. Do not mix a feature with an unrelated
   refactor.
-* Define interfaces where they are consumed. Do not grow the ``INetemNode``
-  surface.
+* Define interfaces where they are consumed. Do not grow the ``Node``
+  composite; use or add a narrow role interface.
 * Keep configuration and collaborators explicit. New package-level mutable
   state is not accepted.
 * The architecture rules in ``.golangci.yml`` (``depguard``) are enforced in CI;
@@ -290,8 +290,8 @@ Adding features
    * - New node type (existing image)
      - ``docker.extraNodes`` entry; no code.
    * - New node family
-     - Implement ``INetemNode`` in a new package, add creation to
-       ``CreateNode``, update validation if needed.
+     - Implement the node roles in a new package, add creation to
+       ``NodeFactory.Create``, update validation if needed.
    * - New node/QoS option
      - Internal struct + YAML tag + validation + protobuf field +
        conversion + kernel application + documentation.

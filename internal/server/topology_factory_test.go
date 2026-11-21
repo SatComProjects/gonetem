@@ -35,7 +35,7 @@ func TestTopologyLoadUsesNodeFactory(t *testing.T) {
 		path:        dir,
 		logger:      logrus.WithField("project", "TST"),
 		IdGenerator: &NodeIdentifierGenerator{lock: &sync.Mutex{}},
-		nodeFactory: func(prjID, name, shortName string, config NodeConfig) (INetemNode, error) {
+		nodeFactory: func(prjID, name, shortName string, config NodeConfig) (Node, error) {
 			mu.Lock()
 			created[name] = createdNode{shortName: shortName, kind: config.Type, launch: config.Launch}
 			mu.Unlock()

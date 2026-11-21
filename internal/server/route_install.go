@@ -28,14 +28,14 @@ func routeInstallLimit(requested int) int {
 	return requested
 }
 
-func (s *netemServer) applyNodeRoutes(ctx context.Context, node INetemNode, specs []link.RouteSpec) (int, error) {
+func (s *netemServer) applyNodeRoutes(ctx context.Context, node RouteNode, specs []link.RouteSpec) (int, error) {
 	if s.routeApplier != nil {
 		return s.routeApplier(ctx, node, specs)
 	}
 	return applyRoutesToNode(ctx, node, specs)
 }
 
-func applyRoutesToNode(ctx context.Context, node INetemNode, specs []link.RouteSpec) (int, error) {
+func applyRoutesToNode(ctx context.Context, node RouteNode, specs []link.RouteSpec) (int, error) {
 	if node.GetType() == "ovs" {
 		return 0, fmt.Errorf("route installation is not supported on OVS node %s", node.GetName())
 	}

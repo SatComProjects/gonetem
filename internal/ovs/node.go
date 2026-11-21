@@ -13,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/moby/term"
-	"github.com/satcomprojects/gonetem/internal/docker"
 	"github.com/satcomprojects/gonetem/internal/link"
 	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/sirupsen/logrus"
@@ -89,11 +88,10 @@ func (o *OvsNode) ExecCommand(
 		return err
 	}
 
-	client, err := docker.NewDockerClient()
+	client, err := o.OvsInstance.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	return client.ExecTty(
 		ctx,
@@ -111,11 +109,10 @@ func (o *OvsNode) RunCommand(cmd []string) ([]byte, []byte, int, error) {
 		return nil, nil, -1, err
 	}
 
-	client, err := docker.NewDockerClient()
+	client, err := o.OvsInstance.dockerClient()
 	if err != nil {
 		return nil, nil, -1, err
 	}
-	defer client.Close()
 
 	pid, err := client.Pid(context.Background(), o.OvsInstance.containerId)
 	if err != nil {

@@ -36,18 +36,25 @@ var (
 type OvsProjectInstance struct {
 	prjID       string
 	containerId string
+	client      docker.ContainerNodeAPI
 	state       State
 	bridges     []string
 	Logger      *logrus.Entry
 }
 
+func (o *OvsProjectInstance) dockerClient() (docker.ContainerNodeAPI, error) {
+	if o.client == nil {
+		return nil, fmt.Errorf("docker client is not configured for OVS instance %s", o.prjID)
+	}
+	return o.client, nil
+}
+
 func (o *OvsProjectInstance) Start() error {
 	if o.state != started {
-		client, err := docker.NewDockerClient()
+		client, err := o.dockerClient()
 		if err != nil {
 			return err
 		}
-		defer client.Close()
 
 		ctx := context.Background()
 		if err := client.Start(ctx, o.containerId); err != nil {
@@ -79,11 +86,10 @@ func (o *OvsProjectInstance) GetNetns() (netns.NsHandle, error) {
 		return netns.NsHandle(0), fmt.Errorf("ovswitch instance not running")
 	}
 
-	client, err := docker.NewDockerClient()
+	client, err := o.dockerClient()
 	if err != nil {
 		return netns.NsHandle(0), err
 	}
-	defer client.Close()
 
 	pid, err := client.Pid(context.Background(), o.containerId)
 	if err != nil {
@@ -97,22 +103,20 @@ func (o *OvsProjectInstance) Capture(ctx context.Context, ifName string, out io.
 		return fmt.Errorf("ovswitch instance not running")
 	}
 
-	client, err := docker.NewDockerClient()
+	client, err := o.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	cmd := []string{"tcpdump", "-w", "-", "-s", "0", "-U", "-i", ifName}
 	return client.ExecOutStream(ctx, o.containerId, cmd, out)
 }
 
 func (o *OvsProjectInstance) Exec(cmd []string) error {
-	client, err := docker.NewDockerClient()
+	client, err := o.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	ctx := context.Background()
 	if _, err := client.Exec(ctx, o.containerId, cmd); err != nil {
@@ -200,11 +204,10 @@ func (o *OvsProjectInstance) DelPort(brName, ifName string) error {
 func (o *OvsProjectInstance) LoadConfig(name, brName, confPath string, timeout int) ([]string, error) {
 	var messages []string
 
-	client, err := docker.NewDockerClient()
+	client, err := o.dockerClient()
 	if err != nil {
 		return messages, err
 	}
-	defer client.Close()
 
 	ctx := context.Background()
 	if timeout > 0 {
@@ -236,11 +239,10 @@ func (o *OvsProjectInstance) LoadConfig(name, brName, confPath string, timeout i
 }
 
 func (o *OvsProjectInstance) SaveConfig(name, brName, dstPath string, timeout int) error {
-	client, err := docker.NewDockerClient()
+	client, err := o.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	ctx := context.Background()
 	if timeout > 0 {
@@ -267,11 +269,10 @@ func (o *OvsProjectInstance) SaveConfig(name, brName, dstPath string, timeout in
 }
 
 func (o *OvsProjectInstance) Close() error {
-	client, err := docker.NewDockerClient()
+	client, err := o.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -283,7 +284,7 @@ func (o *OvsProjectInstance) Close() error {
 	return nil
 }
 
-func NewOvsInstance(prjID string) (*OvsProjectInstance, error) {
+func NewOvsInstance(client docker.ContainerNodeAPI, prjID string) (*OvsProjectInstance, error) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
@@ -292,11 +293,9 @@ func NewOvsInstance(prjID string) (*OvsProjectInstance, error) {
 		return nil, fmt.Errorf("ovswitch container already exists")
 	}
 
-	client, err := docker.NewDockerClient()
-	if err != nil {
-		return nil, err
+	if client == nil {
+		return nil, fmt.Errorf("docker client is required to create an OVS instance")
 	}
-	defer client.Close()
 
 	imgName := options.GetDockerImageId(options.ServerConfig.Docker.OvsImage)
 	present, err := client.IsImagePresent(context.Background(), imgName)
@@ -322,6 +321,7 @@ func NewOvsInstance(prjID string) (*OvsProjectInstance, error) {
 	ovsInstances[prjID] = &OvsProjectInstance{
 		prjID:       prjID,
 		containerId: containerId,
+		client:      client,
 		state:       created,
 		Logger: logrus.WithFields(logrus.Fields{
 			"project": prjID,

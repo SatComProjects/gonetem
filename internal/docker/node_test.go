@@ -18,6 +18,15 @@ const (
 	NODE_TIMEOUT_OP = 10
 )
 
+// newDockerNodeForTest injects the shared Docker client into the node.
+func newDockerNodeForTest(prjID, nodeType string, opts DockerNodeOptions) (*DockerNode, error) {
+	client, err := NewDockerClient()
+	if err != nil {
+		return nil, err
+	}
+	return NewDockerNode(client, prjID, nodeType, opts)
+}
+
 // requireImageForType checks that the image configured for a node type is
 // present locally. It skips the test when Docker or the image is unavailable.
 func requireImageForType(t *testing.T, nodeType string) {
@@ -121,7 +130,7 @@ func BenchmarkDockerNode_RunCommandPidCache(b *testing.B) {
 	}
 
 	options.InitServerConfig()
-	node, err := NewDockerNode(utils.RandString(4), "host", DockerNodeOptions{
+	node, err := newDockerNodeForTest(utils.RandString(4), "host", DockerNodeOptions{
 		Name: utils.RandString(6),
 	})
 	if err != nil {
@@ -169,7 +178,7 @@ func TestVRRPInterfaceNameIncludesGroup(t *testing.T) {
 func TestDockerNode_LazyCreation(t *testing.T) {
 	options.InitServerConfig()
 	requireImageForType(t, "host")
-	node, err := NewDockerNode(utils.RandString(4), "host", DockerNodeOptions{
+	node, err := newDockerNodeForTest(utils.RandString(4), "host", DockerNodeOptions{
 		Name:       utils.RandString(6),
 		LazyCreate: true,
 	})
@@ -199,7 +208,7 @@ func TestDockerNode_StartStopWithoutInterfaces(t *testing.T) {
 	options.InitServerConfig()
 	requireImageForType(t, "host")
 	prjID := utils.RandString(4)
-	node, err := NewDockerNode(prjID, "host", DockerNodeOptions{
+	node, err := newDockerNodeForTest(prjID, "host", DockerNodeOptions{
 		Name: utils.RandString(6),
 	})
 	if err != nil {
@@ -260,7 +269,7 @@ func TestDockerNode_StartStop(t *testing.T) {
 				Mpls: tt.mpls,
 			}
 
-			node, err := NewDockerNode(prjID, tt.nType, options)
+			node, err := newDockerNodeForTest(prjID, tt.nType, options)
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("An error is expected but it is not occurred")
@@ -301,7 +310,7 @@ func TestDockerNode_Copy(t *testing.T) {
 		Name: utils.RandString(3),
 	}
 
-	node, err := NewDockerNode(prjID, "router", config)
+	node, err := newDockerNodeForTest(prjID, "router", config)
 	if err != nil {
 		t.Errorf("Unable to create docker node: %v", err)
 		return
@@ -369,7 +378,7 @@ func TestDockerNode_ReadConfigFiles(t *testing.T) {
 				Name: tt.name,
 			}
 
-			node, err := NewDockerNode(prjID, tt.nType, config)
+			node, err := newDockerNodeForTest(prjID, tt.nType, config)
 			if err != nil {
 				t.Fatalf("Unable to create docker node: %v", err)
 			}
@@ -453,7 +462,7 @@ func TestDockerNode_Save(t *testing.T) {
 				Mpls: tt.mpls,
 			}
 
-			node, err := NewDockerNode(prjID, tt.nType, config)
+			node, err := newDockerNodeForTest(prjID, tt.nType, config)
 			if err != nil {
 				t.Errorf("Unable to create docker node: %v", err)
 				return
@@ -505,7 +514,7 @@ func TestDockerNode_AttachLink(t *testing.T) {
 	config := DockerNodeOptions{
 		Name: utils.RandString(3),
 	}
-	node1, err := NewDockerNode(prjID, "router", config)
+	node1, err := newDockerNodeForTest(prjID, "router", config)
 	if err != nil {
 		t.Fatalf("Unable to create docker node: %v", err)
 	}
@@ -514,7 +523,7 @@ func TestDockerNode_AttachLink(t *testing.T) {
 	config = DockerNodeOptions{
 		Name: utils.RandString(3),
 	}
-	node2, err := NewDockerNode(prjID, "host", config)
+	node2, err := newDockerNodeForTest(prjID, "host", config)
 	if err != nil {
 		t.Fatalf("Unable to create docker node: %v", err)
 	}
@@ -578,7 +587,7 @@ func TestDockerNode_ImageOverride(t *testing.T) {
 		Name:  utils.RandString(3),
 		Image: overrideImage,
 	}
-	node, err := NewDockerNode(prjID, "router", config)
+	node, err := newDockerNodeForTest(prjID, "router", config)
 	if err != nil {
 		t.Fatalf("Unable to create docker node: %v", err)
 	}
@@ -606,7 +615,7 @@ func TestDockerNode_Volumes(t *testing.T) {
 		Name:    utils.RandString(3),
 		Volumes: []string{"/tmp:/tmp/volume"},
 	}
-	node, err := NewDockerNode(prjID, "host", config)
+	node, err := newDockerNodeForTest(prjID, "host", config)
 	if err != nil {
 		t.Fatalf("Unable to create docker node: %v", err)
 	}

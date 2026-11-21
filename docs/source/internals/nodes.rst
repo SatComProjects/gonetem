@@ -3,49 +3,73 @@
 Node implementations
 ====================
 
-The topology engine manipulates nodes exclusively through the ``INetemNode``
-interface. Three implementations exist: Docker nodes, Open vSwitch nodes and
-network-namespace nodes. This page documents the contract and each
-implementation.
+The topology engine holds nodes through the ``Node`` composite, while link,
+route, start/stop and transport boundaries accept the narrow role they need.
+Three implementations exist: Docker nodes, Open vSwitch nodes and
+network-namespace nodes. This page documents the roles, dependency injection
+and each implementation.
 
-The interface
--------------
+Roles
+-----
 
 .. code-block:: go
 
-   type INetemNode interface {
+   type Node interface {
+       NodeIdentity
+       NodeLifecycle
+       NodeNetwork
+       NodeExec
+       NodePersistence
+   }
+
+   type NodeIdentity interface {
        GetName() string
        GetShortName() string
        GetType() string
        GetFullType() string
-       IsRunning() bool
+   }
 
+   type NodeLifecycle interface {
+       IsRunning() bool
        Start() error
        Stop() error
        Kill() error
        Close() error
+   }
 
+   type NodeNetwork interface {
        GetNetns() (netns.NsHandle, error)
        GetInterfaceName(ifIndex int) string
-       AttachMgntInterface(ifName string, ns netns.NsHandle, IPAddress string) error
+       AttachMgntInterface(ifName string, ns netns.NsHandle, ipAddress string) error
        AttachInterface(ifName string, ifIndex int, configure bool) error
        DetachInterface(ifName string) error
        ConfigureInterfaces() error
-       SetInterfaceState(ifIndex int, state link.IfState) error
        GetInterfacesState() map[string]link.IfState
+       SetInterfaceState(ifIndex int, ifState link.IfState) error
+   }
 
-       LoadConfig(confPath string, timeout int) ([]string, error)
-       Save(dstPath string, timeout int) error
-       ReadConfigFiles(confDir string, timeout int) (map[string][]byte, error)
-
-       ExecCommand(ctx context.Context, cmd []string, in io.ReadCloser, out io.Writer,
-           tty bool, ttyHeight uint, ttyWidth uint, resizeCh chan term.Winsize) error
+   type NodeExec interface {
+       ExecCommand(...)
        RunCommand(cmd []string) ([]byte, []byte, int, error)
        GetConsoleCmd(shell bool) ([]string, error)
        Capture(ctx context.Context, ifIndex int, out io.Writer) error
+   }
+
+   type NodePersistence interface {
+       LoadConfig(confPath string, timeout int) ([]string, error)
+       ReadConfigFiles(confDir string, timeout int) (map[string][]byte, error)
+       Save(dstPath string, timeout int) error
        CopyFrom(srcPath, destPath string) error
        CopyTo(srcPath, destPath string) error
    }
+
+Consumer roles are smaller still: ``LinkNode`` (links), ``NodeNetns`` (netns
+cache), ``RouteNode`` (route installation), ``StartableNode``/``StopableNode``
+(topology lifecycle), ``NodeStatus`` (status reporting), and the handler roles
+``CaptureNode``, ``ExecNode``, ``ConsoleNode``, ``RunNode``, ``CopyNode`` and
+``InterfaceStateNode``. See ``internal/server/node_roles.go``. The roles are
+declared by the consumer package, so the adapters do not import
+``internal/server``.
 
 .. list-table::
    :header-rows: 1
@@ -59,8 +83,8 @@ The interface
        ``GetFullType`` the full topology type (``docker.router``).
    * - lifecycle
      - ``Start`` is idempotent; ``Stop`` is idempotent; ``Close`` removes all
-       resources and is safe to call once, even on a failed node; ``Kill``
-       stops without removing.
+       resources and is safe to call repeatedly, even on a failed node;
+       ``Kill`` stops without removing.
    * - namespaces
      - ``GetNetns`` returns an open handle that the caller must close.
    * - interfaces
@@ -75,16 +99,21 @@ The interface
    * - files
      - ``CopyFrom``/``CopyTo`` transport single files.
 
-``CreateNode`` (``internal/server/node.go``) dispatches on the topology type:
+``NodeFactory`` (``internal/server/node.go``) dispatches on the topology type:
 
 .. code-block:: go
 
-   docker.<type>  -> docker.NewDockerNode(prjID, <type>, options)
+   docker.<type>  -> docker.NewDockerNode(client, prjID, <type>, options)
    ovs            -> ovs.NewOvsNode(prjID, name, shortName)
    namespace      -> namespace.NewNamespaceNode(prjID, name, shortName)
 
 Any other type is rejected. A Docker type that is not defined in the server
-configuration is rejected by ``NewDockerNode``.
+configuration is rejected by ``NewDockerNode``. The factory owns the Docker
+client and injects it into Docker/Ovs adapters; those adapters no longer call
+``docker.NewDockerClient`` themselves. ``LoadTopology`` constructs the
+production factory once per project and stores its methods on the topology
+manager (``nodeFactory``, ``ovsFactory``). Tests inject fake factories or nodes
+directly.
 
 Docker nodes
 ------------
@@ -94,8 +123,9 @@ Docker nodes
 Creation
 ~~~~~~~~
 
-``NewDockerNode``:
+``NewDockerNode(client, ...)``:
 
+#. stores the injected ``docker.ContainerNodeAPI``;
 #. resolves the node type definition from ``docker.nodes`` or
    ``docker.extraNodes``;
 #. computes the image (`image` from the topology overrides the type's image;
@@ -271,7 +301,7 @@ OVS is split into two objects:
 Instance
 ~~~~~~~~
 
-``NewOvsInstance(prjID)``:
+``NewOvsInstance(client, prjID)``:
 
 #. refuses to create a second instance for the same project (global mutex and
    map);

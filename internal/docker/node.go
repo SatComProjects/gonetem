@@ -66,6 +66,7 @@ type DockerNode struct {
 	nsMu           sync.Mutex
 	configMu       sync.Mutex
 	LocalNetnsName string
+	client         ContainerNodeAPI
 	Running        bool
 	pid            int // cached container PID; valid only while Running
 	ConfigLoaded   bool
@@ -103,11 +104,10 @@ func (n *DockerNode) GetStatus() (DockerNodeStatus, error) {
 		return DockerNodeStatus{Running: false}, nil
 	}
 
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return DockerNodeStatus{}, err
 	}
-	defer client.Close()
 
 	state, err := client.GetState(context.Background(), n.ID)
 	if err != nil {
@@ -126,11 +126,10 @@ func (n *DockerNode) IsRunning() bool {
 }
 
 func (n *DockerNode) Create(imgName string, ipv6 bool) error {
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	ctx := context.Background()
 
@@ -182,7 +181,7 @@ func (n *DockerNode) resolvePid(resolve func() (int, error)) (int, error) {
 	return pid, nil
 }
 
-func (n *DockerNode) runningPid(client *DockerClient) (int, error) {
+func (n *DockerNode) runningPid(client ContainerNodeAPI) (int, error) {
 	return n.resolvePid(func() (int, error) {
 		return client.Pid(context.Background(), n.ID)
 	})
@@ -207,11 +206,10 @@ func (n *DockerNode) GetRunningNetns() (netns.NsHandle, error) {
 
 	// Docker is consulted only on the first call after Start(); Stop(), Kill()
 	// and Close() invalidate the cached PID.
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return netns.NsHandle(0), err
 	}
-	defer client.Close()
 
 	pid, err = n.runningPid(client)
 	if err != nil {
@@ -348,11 +346,10 @@ func (n *DockerNode) Capture(ctx context.Context, ifIndex int, out io.Writer) er
 		return errors.New("not running")
 	}
 
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	ifName := n.GetInterfaceName(ifIndex)
 	cmd := []string{"tcpdump", "-w", "-", "-s", "0", "-U", "-i", ifName}
@@ -372,11 +369,10 @@ func (n *DockerNode) ExecCommand(
 		return errors.New("not running")
 	}
 
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	return client.ExecTty(
 		ctx,
@@ -391,11 +387,10 @@ func (n *DockerNode) RunCommand(cmd []string) ([]byte, []byte, int, error) {
 		return nil, nil, -1, errors.New("not running")
 	}
 
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return nil, nil, -1, err
 	}
-	defer client.Close()
 
 	pid, err := n.runningPid(client)
 	if err != nil {
@@ -452,11 +447,10 @@ func (n *DockerNode) Start() error {
 		}
 	}
 
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	ctx := context.Background()
 	if err := client.Start(ctx, n.ID); err != nil {
@@ -555,11 +549,10 @@ func (n *DockerNode) Stop() error {
 
 	n.Logger.Debug("Stop Node")
 
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	// Detach interfaces when the node has any.
 	ifStates := n.GetInterfacesState()
@@ -630,11 +623,10 @@ func (n *DockerNode) LoadConfig(confPath string, timeout int) ([]string, error) 
 			}
 		}
 
-		client, err := NewDockerClient()
+		client, err := n.dockerClient()
 		if err != nil {
 			return messages, err
 		}
-		defer client.Close()
 
 		ctx := context.Background()
 		if timeout > 0 {
@@ -739,12 +731,6 @@ func (n *DockerNode) LoadConfig(confPath string, timeout int) ([]string, error) 
 func (n *DockerNode) ReadConfigFiles(confDir string, timeout int) (map[string][]byte, error) {
 	configFilesData := make(map[string][]byte)
 
-	client, err := NewDockerClient()
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
-
 	n.mu.RLock()
 	running := n.Running
 	configLoaded := n.ConfigLoaded
@@ -793,11 +779,10 @@ func (n *DockerNode) Save(dstPath string, timeout int) error {
 		return nil
 	}
 
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	ctx := context.Background()
 	if timeout > 0 {
@@ -863,21 +848,19 @@ func (n *DockerNode) Save(dstPath string, timeout int) error {
 }
 
 func (n *DockerNode) CopyFrom(source, dest string) error {
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	return client.CopyFrom(context.Background(), n.ID, source, dest)
 }
 
 func (n *DockerNode) CopyTo(source, dest string) error {
-	client, err := NewDockerClient()
+	client, err := n.dockerClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	return client.CopyTo(context.Background(), n.ID, source, dest)
 }
@@ -931,11 +914,10 @@ func (n *DockerNode) Kill() error {
 		n.Logger.Info("Kill: starting")
 		start := time.Now()
 
-		client, err := NewDockerClient()
+		client, err := n.dockerClient()
 		if err != nil {
 			return err
 		}
-		defer client.Close()
 
 		ctx := context.Background()
 		if err := client.Stop(ctx, n.ID); err != nil {
@@ -955,11 +937,10 @@ func (n *DockerNode) Close() error {
 	start := time.Now()
 
 	if n.ID != "" {
-		client, err := NewDockerClient()
+		client, err := n.dockerClient()
 		if err != nil {
 			return err
 		}
-		defer client.Close()
 
 		// Force removal also stops a running container. Deleting the container
 		// destroys its netns, so there is no need for a separate kill phase.
@@ -1010,7 +991,16 @@ func getDockerConfigFromType(nType string) (*options.DockerNodeConfig, error) {
 	}
 }
 
-func NewDockerNode(prjID string, nType string, dockerOpts DockerNodeOptions) (*DockerNode, error) {
+// dockerClient returns the injected Docker API or a clear error when a node
+// was built directly without one (some unit tests inspect pure state).
+func (n *DockerNode) dockerClient() (ContainerNodeAPI, error) {
+	if n.client == nil {
+		return nil, errors.New("docker client is not configured for node " + n.Name)
+	}
+	return n.client, nil
+}
+
+func NewDockerNode(client ContainerNodeAPI, prjID string, nType string, dockerOpts DockerNodeOptions) (*DockerNode, error) {
 	nConfig, err := getDockerConfigFromType(nType)
 	if err != nil {
 		return nil, err
@@ -1018,6 +1008,7 @@ func NewDockerNode(prjID string, nType string, dockerOpts DockerNodeOptions) (*D
 
 	node := &DockerNode{
 		PrjID:      prjID,
+		client:     client,
 		ID:         "",
 		Name:       dockerOpts.Name,
 		ShortName:  dockerOpts.ShortName,

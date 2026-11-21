@@ -20,7 +20,7 @@ type LinkUpdateOutcome struct {
 type linkQoSChange struct {
 	link     *NetemLink
 	ifName   string
-	node     INetemNode
+	node     LinkNode
 	op       link.QoSOperation
 	hasTbf   *bool
 	hasNetem *bool
@@ -36,7 +36,7 @@ type linkBatchEntry struct {
 }
 
 type linkQoSGroup struct {
-	node    INetemNode
+	node    LinkNode
 	changes []*linkQoSChange
 }
 
@@ -168,7 +168,7 @@ func buildLinkQoSChange(l *NetemLink, peer int, old, next QoSConfig) *linkQoSCha
 	}
 
 	var (
-		node     INetemNode
+		node     LinkNode
 		ifIndex  int
 		hasTbf   *bool
 		hasNetem *bool
