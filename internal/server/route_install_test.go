@@ -12,7 +12,7 @@ import (
 	"github.com/satcomprojects/gonetem/internal/proto"
 )
 
-func registerRouteProject(t *testing.T, nodes ...Node) string {
+func registerRouteProject(t *testing.T, nodes ...Node) (*netemServer, string) {
 	t.Helper()
 
 	prjID := "routetest"
@@ -21,19 +21,12 @@ func registerRouteProject(t *testing.T, nodes ...Node) string {
 		netemNodes[idx] = NetemNode{Instance: node}
 	}
 
-	projectsMu.Lock()
-	openProjects[prjID] = &NetemProject{
+	server := testServerWithProject(t, &NetemProject{
 		Id:       prjID,
 		Name:     prjID,
 		Topology: &NetemTopologyManager{nodes: netemNodes},
-	}
-	projectsMu.Unlock()
-	t.Cleanup(func() {
-		projectsMu.Lock()
-		delete(openProjects, prjID)
-		projectsMu.Unlock()
 	})
-	return prjID
+	return server, prjID
 }
 
 type fakeRouteNode struct {
@@ -83,7 +76,7 @@ func TestRouteInstallAppliesBatchesWithBoundedConcurrency(t *testing.T) {
 	options.ServerConfig.Docker.RouteConcurrency = 8
 	defer func() { options.ServerConfig.Docker.RouteConcurrency = previous }()
 
-	prjID := registerRouteProject(t,
+	server, prjID := registerRouteProject(t,
 		&fakeStartNode{name: "R1"},
 		&fakeStartNode{name: "R2"},
 		&fakeStartNode{name: "R3"},
@@ -107,7 +100,8 @@ func TestRouteInstallAppliesBatchesWithBoundedConcurrency(t *testing.T) {
 		return len(specs), nil
 	}
 
-	response, err := (&netemServer{routeApplier: apply}).RouteInstall(context.Background(), &proto.RouteInstallRequest{
+	server.routeApplier = apply
+	response, err := server.RouteInstall(context.Background(), &proto.RouteInstallRequest{
 		PrjId:          prjID,
 		MaxConcurrency: 2,
 		Nodes: map[string]*proto.RouteBatch{
@@ -141,7 +135,7 @@ func TestRouteInstallAppliesBatchesWithBoundedConcurrency(t *testing.T) {
 }
 
 func TestRouteInstallReportsMissingNodeWithoutAborting(t *testing.T) {
-	prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
+	server, prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
 
 	called := 0
 	apply := func(_ context.Context, _ RouteNode, specs []link.RouteSpec) (int, error) {
@@ -149,7 +143,8 @@ func TestRouteInstallReportsMissingNodeWithoutAborting(t *testing.T) {
 		return len(specs), nil
 	}
 
-	response, err := (&netemServer{routeApplier: apply}).RouteInstall(context.Background(), &proto.RouteInstallRequest{
+	server.routeApplier = apply
+	response, err := server.RouteInstall(context.Background(), &proto.RouteInstallRequest{
 		PrjId: prjID,
 		Nodes: map[string]*proto.RouteBatch{
 			"R1":      routeBatch("10.0.0.0/24"),
@@ -171,7 +166,7 @@ func TestRouteInstallReportsMissingNodeWithoutAborting(t *testing.T) {
 }
 
 func TestRouteInstallRejectsInvalidSpecBeforeApplying(t *testing.T) {
-	prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
+	server, prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
 
 	called := false
 	apply := func(_ context.Context, _ RouteNode, _ []link.RouteSpec) (int, error) {
@@ -179,7 +174,8 @@ func TestRouteInstallRejectsInvalidSpecBeforeApplying(t *testing.T) {
 		return 0, nil
 	}
 
-	response, err := (&netemServer{routeApplier: apply}).RouteInstall(context.Background(), &proto.RouteInstallRequest{
+	server.routeApplier = apply
+	response, err := server.RouteInstall(context.Background(), &proto.RouteInstallRequest{
 		PrjId: prjID,
 		Nodes: map[string]*proto.RouteBatch{
 			"R1": routeBatch("not-a-cidr"),
@@ -197,7 +193,7 @@ func TestRouteInstallRejectsInvalidSpecBeforeApplying(t *testing.T) {
 }
 
 func TestRouteInstallHonorsCanceledContext(t *testing.T) {
-	prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
+	server, prjID := registerRouteProject(t, &fakeStartNode{name: "R1"})
 
 	called := false
 	apply := func(_ context.Context, _ RouteNode, _ []link.RouteSpec) (int, error) {
@@ -207,7 +203,8 @@ func TestRouteInstallHonorsCanceledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	response, err := (&netemServer{routeApplier: apply}).RouteInstall(ctx, &proto.RouteInstallRequest{
+	server.routeApplier = apply
+	response, err := server.RouteInstall(ctx, &proto.RouteInstallRequest{
 		PrjId: prjID,
 		Nodes: map[string]*proto.RouteBatch{
 			"R1": routeBatch("10.0.0.0/24"),
@@ -225,9 +222,9 @@ func TestRouteInstallHonorsCanceledContext(t *testing.T) {
 }
 
 func TestRouteInstallEmptyRequest(t *testing.T) {
-	prjID := registerRouteProject(t)
+	server, prjID := registerRouteProject(t)
 
-	response, err := (&netemServer{}).RouteInstall(context.Background(), &proto.RouteInstallRequest{PrjId: prjID})
+	response, err := server.RouteInstall(context.Background(), &proto.RouteInstallRequest{PrjId: prjID})
 	if err != nil {
 		t.Fatalf("RouteInstall returned an error: %v", err)
 	}

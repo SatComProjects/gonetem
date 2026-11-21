@@ -28,7 +28,7 @@ func TestMain(m *testing.M) {
 func dialer() func(context.Context, string) (net.Conn, error) {
 	listener := bufconn.Listen(1024 * 1024)
 	server := grpc.NewServer()
-	proto.RegisterNetemServer(server, &netemServer{})
+	proto.RegisterNetemServer(server, newTestServer())
 
 	go func() {
 		if err := server.Serve(listener); err != nil {

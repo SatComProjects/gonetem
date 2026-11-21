@@ -9,6 +9,24 @@ import (
 	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
+// newTestServer builds a handler with an empty per-test project registry.
+func newTestServer() *netemServer {
+	return &netemServer{projects: NewProjectRegistry()}
+}
+
+// testServerWithProject registers an already-built project and returns a
+// handler backed by the same registry.
+func testServerWithProject(t *testing.T, project *NetemProject) *netemServer {
+	t.Helper()
+
+	server := newTestServer()
+	if err := server.projects.Add(project); err != nil {
+		t.Fatalf("unable to register test project: %v", err)
+	}
+	t.Cleanup(func() { server.projects.Remove(project.Id) })
+	return server
+}
+
 // createProjectArchive builds an in-memory .gnet archive from a topology
 // fixture, so project tests do not need a temporary file on disk.
 func createProjectArchive(t *testing.T, topo TopologyTestData) []byte {

@@ -24,11 +24,12 @@ func TestProject_OpenClose(t *testing.T) {
 	// open a project built from namespace nodes: no images or privileges are
 	// needed until the topology is started.
 	prjID := utils.RandString(4)
-	project, err := ProjectOpen(prjID, "PrjTest", createProjectArchive(t, namespaceNetwork))
+	registry := NewProjectRegistry()
+	project, err := registry.Open(prjID, "PrjTest", createProjectArchive(t, namespaceNetwork))
 	if err != nil {
 		t.Fatalf("Unable to open project: %v", err)
 	}
-	defer ProjectClose(prjID, nil)
+	defer registry.Close(prjID, nil)
 
 	// check topology
 	checkTopology(namespaceNetwork, project.Topology, t)
@@ -52,12 +53,13 @@ func TestProject_Save(t *testing.T) {
 
 	// open project
 	prjID := utils.RandString(4)
-	project, err := ProjectOpen(prjID, "PrjTest", data)
+	registry := NewProjectRegistry()
+	project, err := registry.Open(prjID, "PrjTest", data)
 	if err != nil {
 		t.Errorf("Unable to open project: %v", err)
 		return
 	}
-	defer ProjectClose(prjID, nil)
+	defer registry.Close(prjID, nil)
 
 	if _, err := project.Topology.Run(nil); err != nil {
 		t.Errorf("Unable to start project: %v", err)
