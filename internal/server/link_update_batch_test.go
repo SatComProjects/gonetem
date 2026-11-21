@@ -146,16 +146,9 @@ func TestLinkUpdateManyHandlerReportsPerLinkError(t *testing.T) {
 	manager := &NetemTopologyManager{links: []*NetemLink{newQoSTestLink(nodeA, nodeB)}}
 
 	prjID := "linkupdatetesterr"
-	projectsMu.Lock()
-	openProjects[prjID] = &NetemProject{Id: prjID, Name: prjID, Topology: manager}
-	projectsMu.Unlock()
-	t.Cleanup(func() {
-		projectsMu.Lock()
-		delete(openProjects, prjID)
-		projectsMu.Unlock()
-	})
+	server := testServerWithProject(t, &NetemProject{Id: prjID, Name: prjID, Topology: manager})
 
-	response, err := (&netemServer{}).LinkUpdateMany(context.Background(), &proto.LinkUpdateManyRequest{
+	response, err := server.LinkUpdateMany(context.Background(), &proto.LinkUpdateManyRequest{
 		PrjId: prjID,
 		Links: []*proto.LinkConfig{{
 			Peer1: "X.0",
@@ -182,16 +175,9 @@ func TestLinkUpdateManyHandlerReportsUpdatedCount(t *testing.T) {
 	manager := &NetemTopologyManager{links: []*NetemLink{newQoSTestLink(nodeA, nodeB)}}
 
 	prjID := "linkupdatetest"
-	projectsMu.Lock()
-	openProjects[prjID] = &NetemProject{Id: prjID, Name: prjID, Topology: manager}
-	projectsMu.Unlock()
-	t.Cleanup(func() {
-		projectsMu.Lock()
-		delete(openProjects, prjID)
-		projectsMu.Unlock()
-	})
+	server := testServerWithProject(t, &NetemProject{Id: prjID, Name: prjID, Topology: manager})
 
-	response, err := (&netemServer{}).LinkUpdateMany(context.Background(), &proto.LinkUpdateManyRequest{
+	response, err := server.LinkUpdateMany(context.Background(), &proto.LinkUpdateManyRequest{
 		PrjId: prjID,
 		Links: []*proto.LinkConfig{{
 			Peer1: "A.0",

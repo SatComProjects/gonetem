@@ -58,7 +58,7 @@ func applyRoutesToNode(ctx context.Context, node RouteNode, specs []link.RouteSp
 // RouteInstall applies a batch of route changes to several nodes. Per-node
 // failures are reported in the response and do not abort the other nodes.
 func (s *netemServer) RouteInstall(ctx context.Context, request *proto.RouteInstallRequest) (*proto.RouteInstallResponse, error) {
-	project := ProjectGetOne(request.GetPrjId())
+	project := s.projects.Get(request.GetPrjId())
 	if project == nil {
 		return nil, &ProjectNotFoundError{request.GetPrjId()}
 	}

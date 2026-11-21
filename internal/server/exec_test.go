@@ -47,7 +47,7 @@ func (s *execStreamStub) RecvMsg(any) error            { return nil }
 
 func TestNodeExecReturnsWhenClientClosesInput(t *testing.T) {
 	node := &fakeExecNode{fakeStartNode: fakeStartNode{name: "R1"}}
-	prjID := registerCopyProject(t, node)
+	server, prjID := registerCopyProject(t, node)
 
 	stream := &execStreamStub{
 		messages: []*proto.ExecCltMsg{
@@ -57,7 +57,7 @@ func TestNodeExecReturnsWhenClientClosesInput(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- (&netemServer{}).NodeExec(stream)
+		done <- server.NodeExec(stream)
 	}()
 
 	select {
