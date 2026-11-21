@@ -18,7 +18,7 @@ func StartRemoteConsole(server, node string, shell bool) error {
 	if err != nil {
 		return err
 	}
-	defer client.Conn.Close()
+	defer client.Close()
 
 	cmd, err := client.Client.NodeGetConsoleCmd(
 		context.Background(),

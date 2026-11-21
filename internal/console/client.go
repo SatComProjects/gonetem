@@ -14,6 +14,14 @@ type NetemConsoleClient struct {
 	Client proto.NetemClient
 }
 
+// Close closes the underlying connection when there is one. It is safe on a
+// client built by a test with an injected proto.NetemClient.
+func (c *NetemConsoleClient) Close() {
+	if c != nil && c.Conn != nil {
+		_ = c.Conn.Close()
+	}
+}
+
 func NewClient(server string) (*NetemConsoleClient, error) {
 	var creds = insecure.NewCredentials()
 	var opts []grpc.DialOption

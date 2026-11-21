@@ -598,6 +598,13 @@ coverage is 64.3 %.
 Phase 7 - Console command model
 -------------------------------
 
+**Status: complete (2026-11-21).** Delivered the `CommandRegistry` with central
+lookup/arity/regex validation, a `ToolRunner`/`ToolProcess` seam for
+Wireshark/terminal/editor processes, injected client construction, and a
+prompt split into `prompt_commands.go`, `prompt_node_commands.go` and
+`prompt_project_commands.go`. Prompt dispatch and an injected-client handler
+run without a TTY or server; editor/tool lifecycle tests use fakes.
+
 **Goal.** Separate command definition, parsing, execution and presentation so
 the console can be tested without a terminal, gRPC server or external tools.
 
@@ -711,8 +718,8 @@ Metrics and ratchets
      - Keep it hermetic as packages split
    * - Unit coverage (non-generated)
      - 26.5 % after Phase 0
-     - Phase 6 ratchet: 44 % total, 63.5 % server, 34 % Docker,
-       52 % namespace, 12 % link, 83 % OVS (measured 44.7/64.3/34.7/53.2/12.4/84.1)
+     - Phase 7 ratchet: 45 % total, 63.5 % server, 9 % console, 34 % Docker,
+       52 % namespace, 12 % link, 83 % OVS (measured 45.9/64.3/9.3/34.7/53.2/12.4/84.1)
      - At least 60 % total; 80 to 90 % for critical pure logic
    * - Race detector
      - Passes on packages that run
@@ -847,8 +854,8 @@ Phase status
      - Complete (2026-11-21)
      - Service split, ProjectRegistry, conversion layer, bufconn error/partial tests.
    * - 7
-     - Planned
-     - Console command model.
+     - Complete (2026-11-21)
+     - Command registry, tool runner, injected client, prompt file split.
    * - 8
      - Planned
      - Configuration injection and composition root.
