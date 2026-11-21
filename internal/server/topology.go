@@ -549,8 +549,19 @@ type NetemTopologyManager struct {
 	updateBatchMu sync.Mutex
 	// qosBatchApplier is injectable for tests. Production uses link.ApplyQoSBatch.
 	qosBatchApplier func(netns.NsHandle, []link.QoSOperation) ([]link.QoSOperationResult, error)
-	syncMu          sync.Mutex
-	lastSynced      []byte
+	// nodeFactory is injectable for tests. Production uses CreateNode.
+	nodeFactory func(prjID, name, shortName string, config NodeConfig) (INetemNode, error)
+	syncMu      sync.Mutex
+	lastSynced  []byte
+}
+
+// createNode builds a node through the injected factory when one is set.
+// Tests use this seam to exercise topology loading without Docker or root.
+func (t *NetemTopologyManager) createNode(name, shortName string, config NodeConfig) (INetemNode, error) {
+	if t.nodeFactory != nil {
+		return t.nodeFactory(t.prjID, name, shortName, config)
+	}
+	return CreateNode(t.prjID, name, shortName, config)
 }
 
 func (t *NetemTopologyManager) Check() error {
@@ -706,7 +717,7 @@ func (t *NetemTopologyManager) Load() error {
 			if err != nil {
 				return err
 			}
-			node, err := CreateNode(t.prjID, name, shortName, nConfig)
+			node, err := t.createNode(name, shortName, nConfig)
 
 			if err != nil {
 				if node != nil {
@@ -1777,7 +1788,7 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 		}
 	}
 
-	node, err := CreateNode(t.prjID, name, shortName, config)
+	node, err := t.createNode(name, shortName, config)
 	if err != nil {
 		if node != nil {
 			node.Close()

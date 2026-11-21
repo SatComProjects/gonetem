@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/satcomprojects/gonetem/internal/testutil"
 	"github.com/vishvananda/netns"
 )
 
@@ -37,7 +38,7 @@ func txChecksumActive(t *testing.T, ifName string, namespace netns.NsHandle) boo
 }
 
 func TestPrepareInterfacesDisablesTxChecksum(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	ns, teardown := setUpNetlinkTest(t)
 	defer teardown()
@@ -71,7 +72,7 @@ func TestPrepareInterfacesWithoutWorkIsNoop(t *testing.T) {
 }
 
 func TestPrepareInterfacesReportsUnknownInterface(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	ns, teardown := setUpNetlinkTest(t)
 	defer teardown()
@@ -89,7 +90,7 @@ func TestPrepareInterfacesSkipsManagementNames(t *testing.T) {
 }
 
 func TestPrepareInterfacesEnablesMplsInput(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	ns, teardown := setUpNetlinkTest(t)
 	defer teardown()

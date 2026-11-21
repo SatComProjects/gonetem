@@ -6,6 +6,7 @@ import (
 
 	"github.com/satcomprojects/gonetem/internal/link"
 	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/testutil"
 	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
@@ -72,10 +73,8 @@ func TestOvsNode_InterfaceMapConcurrentAccess(t *testing.T) {
 }
 
 func TestOvsNode_StartStop(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	options.InitServerConfig()
+	testutil.RequireImage(t, options.GetDockerImageId(options.ServerConfig.Docker.OvsImage))
 	prjID := utils.RandString(3)
 	name := utils.RandString(4)
 
@@ -125,10 +124,9 @@ func TestOvsNode_StartStop(t *testing.T) {
 }
 
 func TestOvsNode_AttachLink(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires root and Docker networking")
-	}
+	testutil.RequireRoot(t)
 	options.InitServerConfig()
+	testutil.RequireImage(t, options.GetDockerImageId(options.ServerConfig.Docker.OvsImage))
 	prjID := utils.RandString(3)
 
 	instance, err := NewOvsInstance(prjID)

@@ -1,0 +1,53 @@
+package server
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/satcomprojects/gonetem/internal/options"
+	"github.com/satcomprojects/gonetem/internal/testutil"
+	"github.com/satcomprojects/gonetem/internal/utils"
+)
+
+// createProjectArchive builds an in-memory .gnet archive from a topology
+// fixture, so project tests do not need a temporary file on disk.
+func createProjectArchive(t *testing.T, topo TopologyTestData) []byte {
+	t.Helper()
+
+	var buffer bytes.Buffer
+	if err := utils.CreateOneFileArchive(&buffer, networkFilename, []byte(topo.network)); err != nil {
+		t.Fatalf("unable to create project archive: %v", err)
+	}
+	return buffer.Bytes()
+}
+
+// requireSimpleNetworkCapabilities guards tests that run the docker/OVS
+// fixture. RequireRoot and RequireImage turn skips into failures when
+// GONETEM_REQUIRE_INTEGRATION=1.
+func requireSimpleNetworkCapabilities(t *testing.T) {
+	t.Helper()
+	options.InitServerConfig()
+	testutil.RequireRoot(t)
+	requireDockerImage(t, options.ServerConfig.Docker.Nodes.Router.Image)
+	requireDockerImage(t, options.ServerConfig.Docker.Nodes.Host.Image)
+	requireDockerImage(t, options.ServerConfig.Docker.OvsImage)
+}
+
+func requireRouterCapabilities(t *testing.T) {
+	t.Helper()
+	options.InitServerConfig()
+	testutil.RequireRoot(t)
+	requireDockerImage(t, options.ServerConfig.Docker.Nodes.Router.Image)
+}
+
+func requireOvsCapabilities(t *testing.T) {
+	t.Helper()
+	options.InitServerConfig()
+	testutil.RequireRoot(t)
+	requireDockerImage(t, options.ServerConfig.Docker.OvsImage)
+}
+
+func requireDockerImage(t *testing.T, image string) {
+	t.Helper()
+	testutil.RequireImage(t, options.GetDockerImageId(image))
+}

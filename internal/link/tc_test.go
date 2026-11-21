@@ -6,6 +6,7 @@ import (
 
 	"github.com/florianl/go-tc"
 	"github.com/florianl/go-tc/core"
+	"github.com/satcomprojects/gonetem/internal/testutil"
 	"github.com/satcomprojects/gonetem/internal/utils"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
@@ -67,7 +68,7 @@ func listQdiscKinds(t *testing.T, ns netns.NsHandle, ifName string) map[string]i
 }
 
 func TestResetQdiscsIsIdempotent(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	ns, teardown := setUpNetlinkTest(t)
 	defer teardown()
@@ -87,7 +88,7 @@ func TestResetQdiscsIsIdempotent(t *testing.T) {
 }
 
 func TestApplyQoSInstallsAndClearsQdiscs(t *testing.T) {
-	skipUnlessRoot(t)
+	testutil.RequireRoot(t)
 
 	ns, teardown := setUpNetlinkTest(t)
 	defer teardown()

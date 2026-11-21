@@ -89,17 +89,19 @@ back. Tests must never be weakened, deleted or skipped to make a build green.
 make test-unit          # hermetic: no root, Docker, kernel or network
 make test-race          # unit suite under -race
 make test-integration   # root + Docker + kernel namespaces/qdiscs
-make cover              # coverage profile and total
+make cover-check        # coverage profile + per-package ratchet
 ```
 
-- Unit tests run with `-short`; integration tests must guard themselves with
-  `testing.Short()` and/or `skipUnlessRoot`.
+- Unit tests run with `-short`; integration tests guard themselves with the
+  `internal/testutil` helpers (`RequireRoot`, `RequireDocker`, `RequireImage`).
+  Set `GONETEM_REQUIRE_INTEGRATION=1` to turn capability skips into failures;
+  the privileged workflow does this.
 - Kernel-facing tests use private namespaces and clean up with `t.Cleanup`.
 - Concurrency changes require `-race` and deterministic synchronization (no
   sleeps).
 - End-to-end behaviour is covered by the Python gRPC suite in `tests/`.
-- Coverage is a ratchet; do not lower thresholds and do not add tests that
-  assert nothing.
+- Coverage is a ratchet (`.coverage-thresholds`); do not lower floors and do
+  not add tests that assert nothing.
 
 ## Static analysis and CI
 

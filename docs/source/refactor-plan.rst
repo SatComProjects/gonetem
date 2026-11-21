@@ -54,17 +54,17 @@ commands are reproducible; the numbers are the starting point for the ratchets.
        7 tests still fail without root or MPLS-capable networking.
    * - Coverage
      - 22.6 % of all statements including generated protobuf and ``cmd``.
-       After the Phase 0 test classification, the hermetic suite covers
-       26.5 % of ``internal`` statements (1441/5428). Before classification,
-       the non-root suite covered 30.6 % of non-generated statements.
+       Phase 0 left the hermetic suite at 26.5 % of ``internal`` statements;
+       Phase 1 raised it to 32.8 % (1781/5431). Before classification, the
+       non-root suite covered 30.6 % of non-generated statements.
    * - Package coverage, hermetic suite
-     - ``server`` 44.5 %, ``update`` 53.1 %, ``utils`` 57.3 %,
-       ``options`` 39.6 %, ``namespace`` 28.3 %, ``docker`` 8.7 %,
+     - Phase 1: ``server`` 59.5 %, ``update`` 53.1 %, ``utils`` 57.3 %,
+       ``options`` 39.6 %, ``namespace`` 28.3 %, ``docker`` 8.9 %,
        ``ovs`` 8.4 %, ``link`` 9.3 %, ``console`` 0.9 %.
    * - Test classification
      - ``go test -short ./...`` passes without root, Docker images or a Docker
-       daemon. Twenty-one Docker/kernel tests are guarded and still run in the
-       privileged suite.
+       daemon. Capability helpers guard 21 Docker/kernel tests; the full
+       non-root suite passes by skipping them.
    * - ``golangci-lint`` default set
      - 63 issues: 50 ``errcheck``, 11 ``staticcheck``, 1 ``ineffassign``,
        1 ``unused``.
@@ -324,6 +324,14 @@ fakes and adds the characterization tests needed by later phases.
 Phase 1 - Hermetic test architecture
 ------------------------------------
 
+**Status: complete (2026-11-21).** Delivered ``internal/testutil`` capability
+helpers, a hermetic namespace-node fixture for project/topology tests, an
+injectable topology node factory, link-state characterization tests, and the
+``make cover-check`` ratchet (32.5 % internal and 59 % server floors; measured
+32.8 % and 59.5 %). The full non-root suite now passes by skipping genuinely
+privileged tests; the privileged workflow sets
+``GONETEM_REQUIRE_INTEGRATION=1`` to turn those skips into failures.
+
 **Goal.** Build on the Phase 0 classification: a unit test must not need root,
 Docker, kernel modules, network access or a running server. Integration tests
 still cover those effects, but avoidable integration dependencies are replaced
@@ -334,13 +342,15 @@ by fakes.
 * Introduce a small test-support package (or package-local helpers) with
   ``RequireRoot``, ``RequireDocker``, ``RequireImage``, temporary project
   fixtures and fake nodes. Keep helpers small; do not build a test framework.
-* Guard every kernel/Docker/server test with ``testing.Short()`` and the precise
-  capability check. Remove implicit "the image happens to be present" skips.
+* Guard every kernel/Docker/server test with the precise capability check
+  (``testutil.RequireRoot``/``RequireDocker``/``RequireImage``). Remove
+  implicit "the image happens to be present" skips.
 * Split mixed test files where necessary: pure behaviour in the normal file,
   privileged behaviour behind the short guard or a build-tagged integration
   file. Do not reduce the assertions that run in the integration job.
-* Add missing seams instead of shelling out in tests: node factory, Docker API,
-  command runner, archive store, clock where time matters.
+* Add missing seams instead of shelling out in tests. Phase 1 delivered the
+  topology node factory; the Docker API, command runner and archive-store seams
+  remain in Phases 2/3.
 * Add characterization tests for behaviour that will move in Phases 4 to 6:
   topology load/run/save, link add/update/delete, project open/close.
 * Enable ``-race -shuffle=on`` in the unit gate. Fix data races, do not suppress
@@ -360,7 +370,8 @@ by fakes.
 * Failure messages distinguish "capability unavailable" from "behaviour
   broken".
 
-**Primary files.** ``internal/**/*_test.go``, test helpers, ``Makefile``,
+**Primary files.** ``internal/testutil``, ``internal/**/*_test.go``,
+``scripts/check-coverage.sh``, ``.coverage-thresholds``, ``Makefile`` and
 ``.github/workflows/ci.yml``.
 
 Phase 2 - Interface segregation and dependency inversion
@@ -645,23 +656,23 @@ Metrics and ratchets
 
    * - Metric
      - Baseline
-     - Phase 0 gate
+     - Current gate
      - Target
    * - Blocking lint issues
      - 43 (curated), 63 (default)
      - 0
      - 0 with the strict set
    * - Hermetic unit suite
-     - Not available
-     - Selected packages only
-     - ``go test -short ./...`` from a clean machine
+     - Not available before Phase 0
+     - Achieved in Phase 1: ``go test -short ./...`` from a clean machine
+     - Keep it hermetic as packages split
    * - Unit coverage (non-generated)
-     - 26.5 % hermetic; 30.6 % before test classification
-     - Report and ratchet from 26.5 %
+     - 26.5 % after Phase 0
+     - Phase 1 ratchet: 32.5 % total, 59 % server (measured 32.8/59.5)
      - At least 60 % total; 80 to 90 % for critical pure logic
    * - Race detector
      - Passes on packages that run
-     - Required for unit suite
+     - Phase 1: ``make test-race`` passes with ``-shuffle=on``
      - Required; no known race
    * - Dependency violations
      - Not enforced
@@ -731,9 +742,10 @@ Open decisions
 2. **Privileged runner.** Choose between GitHub-hosted runners with ``sudo`` and
    a self-hosted Linux runner. The integration workflow is written for the
    hosted runner first; promote it to required only after measuring stability.
-3. **Coverage target.** The 60 %/80 % figures are provisional until the
-   hermetic suite exists. Freeze them at the end of Phase 1 with a measured
-   baseline and ratchet.
+3. **Coverage target.** Phase 1 froze the ratchet at 32.5 % internal and 59 %
+   for ``internal/server`` (measured 32.8 % and 59.5 %). Keep raising the floors
+   per phase; the final target remains at least 60 % total and 80 to 90 % for
+   critical pure logic.
 4. **Package splits.** Phases 3 to 6 may extract files or packages. Prefer files
    and small types until an import cycle or dependency rule forces a package
    boundary. Record any package split as an ADR.
@@ -771,8 +783,9 @@ Phase status
      - Merged in PR #9: governance, required CI, zero lint baseline, hermetic
        test classification, coverage baseline and branch protection.
    * - 1
-     - Planned
-     - Hermetic unit suite; coverage ratchet.
+     - Complete (2026-11-21)
+     - testutil capability helpers, hermetic project/topology tests, node
+       factory, link characterization, coverage ratchet.
    * - 2
      - Planned
      - Role interfaces and adapter injection.

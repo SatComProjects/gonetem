@@ -5,15 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/satcomprojects/gonetem/internal/options"
 	"github.com/satcomprojects/gonetem/internal/utils"
 )
 
 func TestTopologyRunCreatesOvsLazily(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
-	options.InitServerConfig()
+	requireOvsCapabilities(t)
 
 	dir := t.TempDir()
 	network := `

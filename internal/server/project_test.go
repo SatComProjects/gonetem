@@ -19,39 +19,23 @@ func createProject(filepath string, topo TopologyTestData) error {
 }
 
 func TestProject_OpenClose(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires Docker images")
-	}
 	options.InitServerConfig()
 
-	prjPath := "/tmp/prjtest-archive.gnet"
-	if err := createProject(prjPath, simpleNetwork); err != nil {
-		t.Fatalf("Unable to create .gnet file: %v", err)
-	}
-	defer os.Remove(prjPath)
-
-	data, err := os.ReadFile(prjPath)
-	if err != nil {
-		t.Fatalf("Unable to open created .gnet file: %v", err)
-	}
-
-	// open project
+	// open a project built from namespace nodes: no images or privileges are
+	// needed until the topology is started.
 	prjID := utils.RandString(4)
-	project, err := ProjectOpen(prjID, "PrjTest", data)
+	project, err := ProjectOpen(prjID, "PrjTest", createProjectArchive(t, namespaceNetwork))
 	if err != nil {
 		t.Fatalf("Unable to open project: %v", err)
 	}
 	defer ProjectClose(prjID, nil)
 
 	// check topology
-	checkTopology(simpleNetwork, project.Topology, t)
+	checkTopology(namespaceNetwork, project.Topology, t)
 }
 
 func TestProject_Save(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: requires root and Docker networking")
-	}
-	options.InitServerConfig()
+	requireSimpleNetworkCapabilities(t)
 
 	prjPath := "/tmp/prjtest-archive.gnet"
 	if err := createProject(prjPath, simpleNetwork); err != nil {
