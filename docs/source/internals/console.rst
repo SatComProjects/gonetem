@@ -79,9 +79,10 @@ interpreter:
        server    string
        prjID     string
        prjPath   string
-       processes []*exec.Cmd          // terminals and captures to clean up
-       commands  map[string]*NetemCommand
+       processes []ToolProcess        // terminals/captures to clean up
+       commands  CommandRegistry
        nodes     []NetemNode          // completion
+       tools     ToolRunner           // Wireshark/terminal/editor
    }
 
    type NetemCommand struct {
@@ -90,6 +91,13 @@ interpreter:
        Args  []string                  // regexp per positional argument
        Run   func(p *NetemPrompt, cmdArgs []string)
    }
+
+The command definitions and handlers live in ``prompt_commands.go``,
+``prompt_node_commands.go`` and ``prompt_project_commands.go``. ``prompt.go``
+keeps only the loop/coordinator. ``CommandRegistry``
+(``command_registry.go``) owns lookup, arity and regex validation, and
+``ToolRunner`` (``tools.go``) owns external process creation, so both are
+unit-testable without a TTY or server.
 
 Execution path
 ~~~~~~~~~~~~~~
@@ -101,9 +109,8 @@ Execution path
    process with status 0;
 #. handles ``help``: prints every command with description and usage;
 #. splits the line with ``shlex`` (shell-like quoting);
-#. looks up the command; unknown commands print a hint;
-#. checks the argument count against ``len(Args)+1``;
-#. checks each argument against its regular expression;
+#. looks up the command and validates the argument count/regexes through
+   ``CommandRegistry.Parse``; malformed input prints the same usage errors;
 #. runs the command function.
 
 Argument validation lives in this central loop, so a malformed command never
@@ -135,7 +142,7 @@ Terminal consoles
 -----------------
 
 ``startConsole`` does not run a command on the node directly; it spawns a
-terminal on the operator machine. Sequence:
+terminal on the operator machine through ``p.tools`` (``ToolRunner``). Sequence:
 
 #. fetch the project status and refuse if the project or the node is not
    running;
@@ -188,7 +195,7 @@ the shell inside the node, not by the console.
 Packet capture
 --------------
 
-``Capture`` (``prompt.go``):
+``Capture`` (``prompt_node_commands.go``):
 
 #. split ``<node>.<if>``;
 #. verify ``wireshark`` is in ``PATH``;
@@ -266,10 +273,10 @@ Editor integration
 
 ``edit``:
 
-#. verifies the configured editor exists in ``PATH``;
+#. verifies the configured editor exists through ``p.tools.LookPath``;
 #. reads ``network.yml`` with ``ReadNetworkFile``;
 #. writes it to ``/tmp/gonetem-network-<prjID>``;
-#. runs the editor through ``EditFile``, which attaches stdin/stdout for
+#. runs the editor through ``editFileWithRunner``, which attaches stdin/stdout for
    ``vi``/``vim``/``nano`` (interactive editors) and runs other editors with
    inherited streams;
 #. reads the file back and uploads it with ``WriteNetworkFile``;
