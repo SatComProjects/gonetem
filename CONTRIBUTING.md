@@ -108,7 +108,9 @@ Required checks on pull requests:
 
 `govulncheck` runs on every pull request but is advisory during the Phase 0
 baseline; it becomes blocking in the hardening phase. The privileged
-integration suite runs nightly and can be triggered manually.
+integration suite is defined for nightly/manual runs and activates on the
+default branch after the next `master` release; until then run
+`make test-integration` locally.
 Do not bypass a failing check; fix the cause or document a reviewed exception.
 
 ## Commits and pull requests

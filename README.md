@@ -1,6 +1,8 @@
 gonetem
 =======
 
+[![CI](https://github.com/satcomprojects/gonetem/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/satcomprojects/gonetem/actions/workflows/ci.yml)
+
 GoNetEm is a **network emulator written in Go**. It builds reproducible virtual
 networks from Linux network namespaces, Docker containers, veth pairs, Linux
 traffic control (`netem`/`tbf`) and Open vSwitch, and controls them through a

@@ -289,6 +289,9 @@ structure.
   correctness/quality set and documented exclusions for generated code.
 * Add CI: lint, hermetic tests with race and coverage, build, documentation and
   ``govulncheck``. Add the privileged integration workflow (nightly/manual).
+  GitHub only schedules workflows from the default branch, so the nightly run
+  starts after the next ``master`` release; until then use
+  ``make test-integration`` locally.
 * Add Makefile targets: ``fmt-check``, ``vet``, ``lint``, ``test-unit``,
   ``test-race``, ``test-integration``, ``cover``, ``govulncheck``, ``check``.
 * Add the pull request and issue templates that require specification, TDD
@@ -763,9 +766,9 @@ Phase status
      - Status
      - Evidence / note
    * - 0
-     - Implemented, pending merge
-     - Governance, CI, zero lint baseline, hermetic test classification and
-       coverage baseline in this change.
+     - Complete (2026-11-21)
+     - Merged in PR #9: governance, required CI, zero lint baseline, hermetic
+       test classification, coverage baseline and branch protection.
    * - 1
      - Planned
      - Hermetic unit suite; coverage ratchet.

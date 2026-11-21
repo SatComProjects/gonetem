@@ -230,10 +230,14 @@ Every pull request to ``develop`` or ``master`` must pass:
 
 The **vulnerability scan** (``govulncheck ./...``) also runs on every pull
 request but is advisory during the Phase 0 baseline; it becomes required in the
-hardening phase. The privileged integration workflow (``.github/workflows/integration.yml``)
-runs nightly and manually. It pulls the node images, runs the full Go suite as
-root, starts ``gonetem-server`` and executes the Python gRPC suite. It becomes a
-required check once its pass rate is stable. A privileged runner needs:
+hardening phase. The privileged integration workflow
+(``.github/workflows/integration.yml``) is defined for nightly and manual runs.
+It pulls the node images, runs the full Go suite as root, starts
+``gonetem-server`` and executes the Python gRPC suite. GitHub only schedules
+workflows from the default branch, so the nightly run starts after the next
+``master`` release; until then run ``make test-integration`` locally. The
+workflow becomes a required check once its pass rate is stable. A privileged
+runner needs:
 
 * Linux with Docker (or Docker-in-Docker) and privileges to create namespaces;
 * the gonetem images pre-pulled;
