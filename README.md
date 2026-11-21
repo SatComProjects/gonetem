@@ -92,44 +92,42 @@ links:
 ```
 
 Documentation
-------------
+-------------
 
-The complete manual is in [`docs/`](docs/) (Sphinx, reStructuredText) and is
-configured for Read the Docs. Highlights:
+The complete manual is in [`docs/README.md`](docs/README.md), as plain Markdown
+browsable on GitHub or in any local editor. Highlights:
 
-* [Introduction](docs/source/introduction.rst) — concepts and feature overview.
-* [Getting started](docs/source/getting-started.rst) — a guided first lab.
-* [Installation](docs/source/installation.rst) — build, `.deb`, service, images.
-* [Configuration](docs/source/configuration.rst) — every server and console key.
-* [Topology reference](docs/source/topology.rst) — nodes, links, QoS, bridges,
+* [Introduction](docs/introduction.md) — concepts and feature overview.
+* [Getting started](docs/getting-started.md) — a guided first lab.
+* [Installation](docs/installation.md) — build, `.deb`, service, images.
+* [Configuration](docs/configuration.md) — every server and console key.
+* [Topology reference](docs/topology.md) — nodes, links, QoS, bridges,
   management network and validation rules.
-* [Node types and images](docs/source/nodes.rst),
-  [Docker images](docs/source/docker-images.rst).
-* [Commands](docs/source/commands.rst) — CLI and prompt reference.
-* [Switch console](docs/source/ovs.rst) — VLANs, STP, bonding.
-* [TLS](docs/source/tls.rst) — securing a remote console/server link.
-* [gRPC API](docs/source/api.rst) — every RPC and streaming protocol.
-* [Project file format](docs/source/project-format.rst).
-* [Architecture](docs/source/architecture.rst) and internals
-  ([server](docs/source/internals/server.rst),
-  [topology](docs/source/internals/topology.rst),
-  [links/QoS](docs/source/internals/link.rst),
-  [nodes](docs/source/internals/nodes.rst),
-  [console](docs/source/internals/console.rst),
-  [update](docs/source/internals/update.rst)).
-* [Development](docs/source/development.rst),
-  [testing](docs/source/testing.rst) and the
-  [SOLID/TDD refactor plan](docs/source/refactor-plan.rst).
-* [Deployment](docs/source/deployment.rst),
-  [troubleshooting](docs/source/troubleshooting.rst),
-  [FAQ](docs/source/faq.rst), [glossary](docs/source/glossary.rst).
+* [Node types and images](docs/nodes.md),
+  [Docker images](docs/docker-images.md).
+* [Commands](docs/commands.md) — CLI and prompt reference.
+* [Switch console](docs/ovs.md) — VLANs, STP, bonding.
+* [TLS](docs/tls.md) — securing a remote console/server link.
+* [gRPC API](docs/api.md) — every RPC and streaming protocol.
+* [Project file format](docs/project-format.md).
+* [Architecture](docs/architecture.md) and internals
+  ([server](docs/internals/server.md),
+  [topology](docs/internals/topology.md),
+  [links/QoS](docs/internals/link.md),
+  [nodes](docs/internals/nodes.md),
+  [console](docs/internals/console.md),
+  [update](docs/internals/update.md)).
+* [Development](docs/development.md),
+  [testing](docs/testing.md) and the
+  [SOLID/TDD refactor plan](docs/refactor-plan.md).
+* [Deployment](docs/deployment.md),
+  [troubleshooting](docs/troubleshooting.md),
+  [FAQ](docs/faq.md), [glossary](docs/glossary.md).
 
-Build the HTML locally:
+Check the documentation locally:
 
 ```bash
-python3 -m venv /tmp/docsvenv
-/tmp/docsvenv/bin/pip install -r docs/requirements.txt
-/tmp/docsvenv/bin/sphinx-build -b html docs/source docs/build/html
+python3 scripts/check-docs.py
 ```
 
 Requirements
@@ -187,7 +185,7 @@ Docker images
 | `mroy31/gonetem-ovs` | `ovs` |
 
 Images are pulled with `gonetem-console pull`; see
-[docs/source/docker-images.rst](docs/source/docker-images.rst) for their
+[docs/docker-images.md](docs/docker-images.md) for their
 contents and build instructions (including VyOS).
 
 Updating
@@ -197,21 +195,21 @@ Updating
 `/etc/gonetem/config.yaml`, run `gonetem-console update`. The server clones the
 configured repository/branch, downloads the configured Go toolchain, builds and
 installs the new binaries, then restarts the service. See
-[docs/source/internals/update.rst](docs/source/internals/update.rst).
+[docs/internals/update.md](docs/internals/update.md).
 
 Testing
 -------
 
 ```bash
-make check                                            # hermetic: fmt, lint, unit, race, build
+make check                                            # hermetic: fmt, lint, docs, unit, race, build
 make test-integration                                 # root + Docker + kernel tests
 python -m pytest -s tests/test_grpc_link_qos.py -v    # against a running server
 ```
 
 The project follows specification-first development and Red-Green-Refactor.
 See [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md) for AI agents,
-[docs/source/development.rst](docs/source/development.rst) and
-[docs/source/refactor-plan.rst](docs/source/refactor-plan.rst).
+[docs/development.md](docs/development.md) and
+[docs/refactor-plan.md](docs/refactor-plan.md).
 
 Contributing
 ------------
@@ -239,7 +237,7 @@ conf/               default server configuration, systemd unit, sysctl tuning
 docker/             Docker image sources
 scripts/            certificate/generation/migration helpers
 tests/              Python gRPC integration tests
-docs/               Sphinx documentation
+docs/               Markdown manual (local)
 Makefile            build, install, packaging targets
 VERSION             project version
 ```

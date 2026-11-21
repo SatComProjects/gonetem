@@ -1,5 +1,4 @@
 {
-    "restructuredtext.confPath": "${workspaceFolder}/docs/source",
     "go.alternateTools": {
 	    "dlv-dap": "${workspaceFolder}/.vscode/dlv-sudo.sh"
     }

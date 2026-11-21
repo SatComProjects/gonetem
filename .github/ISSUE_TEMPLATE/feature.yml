@@ -8,7 +8,7 @@ body:
       value: |
         Specification first: describe the required behaviour and how it will be
         verified before proposing an implementation. See `AGENTS.md` and
-        `docs/source/development.rst`.
+        `docs/development.md`.
   - type: textarea
     id: problem
     attributes:
