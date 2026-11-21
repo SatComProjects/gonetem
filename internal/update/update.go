@@ -112,7 +112,9 @@ func (u *Updater) Run(ctx context.Context) (err error) {
 		// Remove the temporary workdir, but keep it on error to help debugging.
 		defer func() {
 			if err == nil {
-				os.RemoveAll(workdir)
+				if rmErr := os.RemoveAll(workdir); rmErr != nil {
+					u.log(STEP_GIT, "unable to remove temporary workdir: "+rmErr.Error())
+				}
 			} else {
 				u.log(STEP_GIT, "workdir kept for debugging: "+workdir)
 			}
@@ -187,7 +189,7 @@ func (u *Updater) prepareWorkdir() (string, error) {
 		return workdir, nil
 	}
 
-	if err := os.MkdirAll(u.Config.Workdir, 0755); err != nil {
+	if err := os.MkdirAll(u.Config.Workdir, 0750); err != nil {
 		return "", fmt.Errorf("unable to create update directory %s: %w", u.Config.Workdir, err)
 	}
 	return u.Config.Workdir, nil
@@ -306,7 +308,7 @@ func (u *Updater) installGo(ctx context.Context, workdir string) (string, error)
 	if err := extractTarGz(archive, workdir); err != nil {
 		return "", fmt.Errorf("unable to extract %s: %w", archive, err)
 	}
-	os.Remove(archive)
+	_ = os.Remove(archive)
 
 	u.step(STEP_GO, fmt.Sprintf("Go %s installed in %s", version, workdir))
 	return gobin, nil
@@ -345,7 +347,7 @@ func download(ctx context.Context, url, dest string) error {
 	}
 
 	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
+		_ = f.Close()
 		return fmt.Errorf("unable to download %s: %w", url, err)
 	}
 	return f.Close()
@@ -381,11 +383,11 @@ func extractTarGz(archive, dest string) error {
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
+			if err := os.MkdirAll(target, 0750); err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return err
 			}
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
@@ -393,7 +395,7 @@ func extractTarGz(archive, dest string) error {
 				return err
 			}
 			if _, err := io.Copy(out, tr); err != nil {
-				out.Close()
+				_ = out.Close()
 				return err
 			}
 			if err := out.Close(); err != nil {
@@ -432,10 +434,10 @@ func (u *Updater) goHome() string {
 // it, go cannot locate its build cache and its module cache.
 func (u *Updater) goEnv(gobin string) ([]string, error) {
 	gohome := u.goHome()
-	if err := os.MkdirAll(filepath.Join(gohome, "pkg", "mod"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gohome, "pkg", "mod"), 0750); err != nil {
 		return nil, fmt.Errorf("unable to create go module cache: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(gohome, "build-cache"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gohome, "build-cache"), 0750); err != nil {
 		return nil, fmt.Errorf("unable to create go build cache: %w", err)
 	}
 
@@ -480,7 +482,7 @@ func (u *Updater) install(workdir string) error {
 	}
 	u.step(STEP_INSTALL, fmt.Sprintf("Install gonetem in %s", installDir))
 
-	if err := os.MkdirAll(installDir, 0755); err != nil {
+	if err := os.MkdirAll(installDir, 0750); err != nil {
 		return fmt.Errorf("unable to create %s: %w", installDir, err)
 	}
 
@@ -514,14 +516,14 @@ func copyFile(src, dest string) error {
 		return fmt.Errorf("unable to create temporary file in %s: %w", filepath.Dir(dest), err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 
 	if _, err := io.Copy(tmp, in); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("unable to copy %s: %w", src, err)
 	}
 	if err := tmp.Chmod(0755); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("unable to set permissions on %s: %w", tmpName, err)
 	}
 	if err := tmp.Close(); err != nil {

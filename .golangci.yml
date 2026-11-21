@@ -22,9 +22,44 @@ linters:
     - gocritic
     - gocyclo
     - depguard
+    - revive
+    - gosec
+    - dupl
   settings:
     gocyclo:
       min-complexity: 30
+    dupl:
+      threshold: 200
+    revive:
+      # Naming is enforced by gofmt/review; these rules would force a broad
+      # exported-API rename across the project. Keep the behavioural rules.
+      rules:
+        - name: var-naming
+          disabled: true
+        - name: unused-parameter
+          disabled: true
+        - name: receiver-naming
+          disabled: true
+        - name: indent-error-flow
+          disabled: true
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+    gosec:
+      # Intentional adapter patterns, documented in the security section of
+      # AGENTS.md: privileged subprocess argv, config-controlled paths,
+      # unsafe ethtool ioctls, non-crypto identifier randomness and bounded
+      # protobuf/config integer conversions. File/dir permissions and
+      # unhandled-error findings are not excluded.
+      excludes:
+        - G103
+        - G109
+        - G110
+        - G115
+        - G204
+        - G304
+        - G404
     depguard:
       rules:
         # Dependency direction, enforced rather than documented only:
@@ -96,6 +131,8 @@ linters:
           - gocritic
           - gocyclo
           - unparam
+          - gosec
+          - dupl
 
 formatters:
   enable:

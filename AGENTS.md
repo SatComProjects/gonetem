@@ -210,7 +210,7 @@ Additional rules:
 
 Required status checks on `develop` and `master`:
 
-- `Lint` — gofmt, `go vet`, `golangci-lint`, `go mod tidy -diff`.
+- `Lint` — gofmt, `go vet`, `golangci-lint` (including curated `revive`, `gosec` and `dupl`), `go mod tidy -diff`. The gosec exceptions in `.golangci.yml` are intentional adapter patterns; do not add a new exclusion without a written justification.
 - `Unit tests` — `go test -short -race`, coverage artifact.
 - `Build` — cross-compiled server and console binaries.
 - `Docs` — Sphinx with warnings as errors.

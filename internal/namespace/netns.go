@@ -24,7 +24,7 @@ func (n *NamespaceNode) ensureNetns() error {
 
 	if n.initialized {
 		if ns, err := netns.GetFromName(n.nsName); err == nil {
-			ns.Close()
+			_ = ns.Close()
 			return nil
 		}
 	}

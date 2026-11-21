@@ -346,8 +346,8 @@ func (c *DockerClient) CopyTo(ctx context.Context, containerId, source, dest str
 			pWriter.CloseWithError(err)
 			return
 		}
-		tarWriter.Close()
-		pWriter.Close()
+		_ = tarWriter.Close()
+		_ = pWriter.Close()
 	}()
 
 	return c.cli.CopyToContainer(

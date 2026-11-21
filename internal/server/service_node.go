@@ -176,7 +176,7 @@ func (s *netemServer) NodeCapture(request *proto.NodeInterfaceRequest, stream pr
 				Code: proto.CaptureSrvMsg_STDOUT,
 				Data: data[:n],
 			}); err != nil {
-				rOut.CloseWithError(err)
+				_ = rOut.CloseWithError(err)
 				waitCh <- err
 				return
 			}
@@ -189,13 +189,13 @@ func (s *netemServer) NodeCapture(request *proto.NodeInterfaceRequest, stream pr
 			Code: proto.CaptureSrvMsg_ERROR,
 			Data: []byte(err.Error()),
 		}); sendErr != nil {
-			wOut.Close()
+			_ = wOut.Close()
 			return sendErr
 		}
 	}
 
 	logger.Debugf("Stop capture on interface %d", request.IfIndex)
-	wOut.Close()
+	_ = wOut.Close()
 	return <-waitCh
 }
 
@@ -284,7 +284,7 @@ func (s *netemServer) NodeExec(stream proto.Netem_NodeExecServer) error {
 	g := new(errgroup.Group)
 	g.Go(func() error {
 		defer close(resizeCh)
-		defer wIn.Close()
+		defer func() { _ = wIn.Close() }()
 
 		for {
 			in, err := stream.Recv()
@@ -357,8 +357,8 @@ func (s *netemServer) NodeExec(stream proto.Netem_NodeExecServer) error {
 		})
 	}
 
-	wOut.Close()
-	defer wIn.Close()
+	_ = wOut.Close()
+	defer func() { _ = wIn.Close() }()
 
 	if sendErr != nil {
 		return fmt.Errorf("unable to send exec result: %w", sendErr)
@@ -498,10 +498,10 @@ func (s *netemServer) NodeCopyTo(stream proto.Netem_NodeCopyToServer) error {
 
 	defer func() {
 		if tempFile != nil {
-			tempFile.Close()
+			_ = tempFile.Close()
 		}
 		if tempDir != "" {
-			os.RemoveAll(tempDir)
+			_ = os.RemoveAll(tempDir)
 		}
 	}()
 

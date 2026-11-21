@@ -111,14 +111,14 @@ func (r *ProjectRegistry) Open(id, name string, data []byte) (*NetemProject, err
 	}
 
 	if err := utils.OpenArchive(dir, bytes.NewReader(data)); err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("unable to open project: %w", err)
 	}
 
 	topology, err := LoadTopology(id, dir, r.config, r.factory)
 	if err != nil {
-		topology.Close(nil)
-		os.RemoveAll(dir)
+		_ = topology.Close(nil)
+		_ = os.RemoveAll(dir)
 		return nil, err
 	}
 
@@ -133,8 +133,8 @@ func (r *ProjectRegistry) Open(id, name string, data []byte) (*NetemProject, err
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, found := r.projects[id]; found {
-		topology.Close(nil)
-		os.RemoveAll(dir)
+		_ = topology.Close(nil)
+		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("project id %s is already open", id)
 	}
 	r.projects[id] = project
@@ -201,6 +201,6 @@ func (r *ProjectRegistry) Close(id string, progressCh chan TopologyRunCloseProgr
 	delete(r.projects, id)
 	r.mu.Unlock()
 
-	os.RemoveAll(project.Dir)
+	_ = os.RemoveAll(project.Dir)
 	return err
 }

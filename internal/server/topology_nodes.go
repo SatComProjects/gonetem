@@ -49,7 +49,7 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 	node, err := t.createNode(name, shortName, config)
 	if err != nil {
 		if node != nil {
-			node.Close()
+			_ = node.Close()
 		}
 		return fmt.Errorf("unable to create node %s: %w", name, err)
 	}
@@ -64,7 +64,7 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 	if t.running {
 		if config.Launch {
 			if err := node.Start(); err != nil {
-				node.Close()
+				_ = node.Close()
 				t.nodes = t.nodes[:len(t.nodes)-1]
 				return fmt.Errorf("unable to start node %s: %w", name, err)
 			}
@@ -81,7 +81,7 @@ func (t *NetemTopologyManager) NodeAdd(name string, config NodeConfig, sync bool
 						logrus.Warnf("unable to stop node %s during rollback: %v", name, stopErr)
 					}
 				}
-				node.Close()
+				_ = node.Close()
 				t.nodes = t.nodes[:len(t.nodes)-1]
 				return fmt.Errorf("unable to setup mgnt link for node %s: %w", name, err)
 			}
@@ -137,7 +137,7 @@ func deleteNodeLinks(
 		if len(bridgePeerNames) > 0 {
 			rootNs := link.GetRootNetns()
 			err := link.DeleteLinks(bridgePeerNames, rootNs)
-			rootNs.Close()
+			_ = rootNs.Close()
 			if err != nil {
 				return fmt.Errorf("unable to delete bridge links for node %s: %w", name, err)
 			}

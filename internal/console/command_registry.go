@@ -70,7 +70,8 @@ func (r CommandRegistry) Parse(args []string) (*NetemCommand, []string, error) {
 		if err != nil {
 			return nil, nil, commandError{fmt.Sprintf("invalid argument pattern for '%s': %v", args[0], err)}
 		}
-		if !re.MatchString(args[idx+1]) {
+		arg := args[idx+1] //nolint:gosec // arity was checked against len(cmd.Args)+1 above
+		if !re.MatchString(arg) {
 			return nil, nil, commandError{fmt.Sprintf("Wrong format for argument %d\n\tusage: %s", idx+1, cmd.Usage)}
 		}
 	}
