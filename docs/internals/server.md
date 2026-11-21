@@ -1,0 +1,236 @@
+# Server internals
+
+`gonetem-server` is a single Go binary exposing the `netem.Netem` gRPC service. This page covers its startup, the service layer, the streaming protocols and the lifecycle details that matter when operating or extending it.
+
+## Startup
+
+`cmd/gonetem-server/main.go` performs, in order:
+
+1.  **flag parsing** — `-verbose`, `-conf-file` (default `/etc/gonetem/config.yaml`), `-log-file` (empty: stderr);
+2.  **logging** — logrus with a text formatter; level `info`, or `debug` with `-verbose`; output to the log file if given;
+3.  **configuration** — built-in defaults are loaded, then the configuration file is parsed if it exists (missing file: warning, defaults are used);
+4.  **signal handling** — `SIGINT` and `SIGTERM` cancel the root context;
+5.  **server construction** — the binary creates the Docker client, snapshots the parsed configuration into `server.Config` and calls `server.NewServer(client, config)`;
+6.  **gRPC listener** in a goroutine:
+    - TLS credentials are loaded if `tls.enabled`; a failure exits with status 2;
+    - the service is registered;
+    - `net.Listen("tcp", listen)`; a failure exits with status 2;
+    - `grpcServer.Serve(socket)`; a failure cancels the context.
+
+On shutdown:
+
+1.  the listener is stopped with `grpcServer.GracefulStop()`, so no handler can start after the projects are closed;
+2.  `netemServer.Close()` closes every open project, which removes all containers, namespaces, bridges and OVS instances;
+3.  if the listen address is a filesystem path (Unix socket), the leftover file is removed.
+
+The ordering is deliberate: closing projects while RPCs are still accepted would let a handler mutate the project map during iteration.
+
+## Service layer
+
+`netemServer` embeds `proto.UnimplementedNetemServer` so new RPCs added to the proto do not break the build until implemented. It carries the injected collaborators:
+
+```go
+type netemServer struct {
+    proto.UnimplementedNetemServer
+    routeApplier func(context.Context, RouteNode, []link.RouteSpec) (int, error)
+    dockerClient docker.ContainerAPI
+    projects     *ProjectRegistry
+    config       Config
+    factory      *NodeFactory
+}
+```
+
+`routeApplier` is a test seam for `RouteInstall`; production uses `applyRoutesToNode`. `dockerClient`, `config`, `factory` and `projects` are injected by `NewServer`. Handlers read settings from `s.config`; the project registry and topology manager receive the same value object. Similar seams exist inside the topology manager for qdisc batches (`qosBatchApplier`).
+
+The handlers are split by service area:
+
+- `service_server.go` — version, clean, pull, update;
+- `service_project.go` — project list/open/close/save/status/network file;
+- `service_topology.go` — run/reload/start-all/stop-all/check and progress;
+- `service_node.go` — node lifecycle, console/exec/capture/copy;
+- `service_link.go` — link add/delete/update/batch/sync;
+- `convert.go` — protobuf ↔ domain conversions;
+- `server.go` — registration type, close, construction.
+
+Handlers are thin by design. They:
+
+1.  look up the project in `s.projects` and return a `ProjectNotFoundError` gRPC error when absent;
+2.  convert protobuf messages to internal structures (`convert.go`, `routeSpecsFromProto`);
+3.  delegate to a topology manager method;
+4.  convert results back, including per-item statuses for batch RPCs.
+
+The conversion layer is important for compatibility: internal structs use Go types and YAML tags, protobuf messages use proto field names, and the two are kept independent so that the wire contract and the file format can evolve separately.
+
+## Configuration and composition
+
+`internal/options` owns parsing, defaults, file compatibility and TLS loading. The binaries snapshot the parsed values into `server.Config` / `docker.RuntimeConfig` and inject them:
+
+- `cmd/gonetem-server` creates the Docker client, builds `server.ConfigFromOptions(options.ServerConfig)` and calls `server.NewServer(client, config)`;
+- `Config` carries workdir, Docker timeout, concurrency limits, update config, pull-image list and `docker.RuntimeConfig`;
+- `NodeFactory` receives the Docker client + runtime config; `NewDockerNode` and `NewOvsInstance` receive the runtime config; `OvsNode` receives the workdir;
+- `ProjectRegistry`, the topology manager and handlers receive `Config`; they do not read `options.ServerConfig`;
+- Tests construct `Config` literals or helpers, so two servers with different workdirs/concurrency can coexist in one process.
+
+The console configuration is still owned by the console's config manager for `config set/show`; `NewNetemPrompt` and `NewClient` receive the current console value instead of reading it inside command handlers.
+
+## Project registry
+
+`internal/server/project_registry.go` owns the open-project set. Each `netemServer` has its own instance; there is no package-level project map.
+
+```go
+type ProjectRegistry struct {
+    mu       sync.RWMutex
+    opsMu    sync.Mutex
+    projects map[string]*NetemProject
+}
+```
+
+- `mu` guards the map; `Has`/`Get`/`Snapshot`/`IsNameOpen` take the read lock. `Add`/`Remove` are used by tests and internal setup.
+- `opsMu` serialises open/save/get-configs/close, so a project cannot be saved while it is closing.
+- `Open` checks name uniqueness before and after creating the project object and returns an error if the ID or name was taken.
+- `Save` synchronises node configuration and returns the archive buffer while holding `opsMu`.
+- `Close` closes the topology, deletes the registry entry, then removes the temporary directory (even when the topology close returned an error).
+
+Project IDs are generated with `utils.RandString(3)` and retried until they are unique among open projects.
+
+## Streaming protocols
+
+The server implements five streaming patterns.
+
+### Progress streams
+
+`TopologyRun`, `TopologyReload` and `ProjectClose` need to report progress while a blocking operation runs. The pattern is:
+
+```text
+handler
+  progressCh := make(chan T)          // buffered for Run (100)
+  ctx, cancel := context.WithCancel(background)
+  defer cancel()
+  go forward(progressCh -> stream)    // exits on ctx.Done()
+  err := topology.Run(progressCh)     // blocking
+  stream.Send(final message)
+  return err
+```
+
+A `progressBatcher` coalesces per-node ticks: it accumulates counts per code and flushes at most every 100 ms (and once at the end), so a 500-node topology does not send 500 messages. `progress.Set` sends totals immediately.
+
+The forwarder goroutine exits when the handler returns (deferred `cancel`), so no goroutine is leaked even if the client disconnects.
+
+### Save streams
+
+`ProjectSave` sends `NODE_COUNT`, one `NODE_SAVE` per node from the topology save routine, then a single `DATA` message with the archive bytes.
+
+### Byte streams
+
+`NodeCapture` and `NodeCopyFrom` stream raw bytes:
+
+- capture: an `io.Pipe` connects the handler to the node's `tcpdump` writer; a goroutine reads 256-byte chunks and sends `STDOUT` messages; an `io.EOF` from the pipe is a normal end;
+- download: the server first copies the node file into a temporary directory under `workdir` (then removes it) and streams it in 1024-byte chunks. The copy-to-temp step means a large or slow node filesystem does not hold a gRPC send while the file is being read from the container.
+
+### Upload streams
+
+`NodeCopyTo` is client-streaming. The server requires `INIT` first (project, node, destination), then `DATA` chunks written to a temporary file, and performs the actual copy on `io.EOF`. Protocol violations (`INIT` twice, `DATA` before `INIT`, no `INIT` at all) produce an `AckResponse` with `status.code = ERROR`.
+
+### Interactive streams
+
+`NodeExec` is bidirectional. The handler:
+
+1.  receives the first message and requires code `CMD`;
+2.  resolves the project and node;
+3.  creates two `io.Pipe` pairs (stdin, stdout) and a resize channel;
+4.  runs three things concurrently with an `errgroup`:
+    - a reader goroutine that dispatches `DATA` to the stdin pipe, `RESIZE` to the resize channel and `CLOSE` by cancelling the context;
+    - a writer goroutine that reads the stdout pipe and sends `STDOUT` messages;
+    - `node.ExecCommand`, which drives the actual process/PTY;
+5.  sends `CLOSE` on success or `ERROR` with the message on failure;
+6.  closes the pipes and waits for the goroutines.
+
+Backpressure is handled by the pipes: if the client stops reading, the server stops sending, and the node's process eventually blocks — the expected behaviour for an interactive terminal.
+
+### Capture timing
+
+`NodeCapture` sends `OK` **before** starting `tcpdump` so the client can launch Wireshark and start reading immediately. Any error after that point is sent as an `ERROR` message and the stream ends.
+
+## Batch operations
+
+### `RouteInstall`
+
+```text
+results := {each requested node: status ERROR "route installation was not executed"}
+pool := errgroup with limit routeInstallLimit(request.maxConcurrency)
+for each node batch: pool.Go(installNodeRoutes)
+pool.Wait()          // errors are swallowed; they are in results
+return all results
+```
+
+`installNodeRoutes` is per node: check `ctx`, resolve the node, parse the routes (CIDR, gateway family, device), call the applier, record `applied`/`durationMicros`. A node that is not running or an OVS node gets an explanatory error. The pool limit is the server's `docker.routeConcurrency` capped by the request: a client can reduce concurrency but never exceed the server limit.
+
+### `LinkUpdateMany`
+
+The topology method does the work; the handler only converts and counts:
+
+- outcomes are in request order;
+- `Status.code` is `ERROR` for a failed item, with the message;
+- `updated` counts successful items;
+- the envelope `status` is `OK` as long as the batch itself ran.
+
+### `LinkSyncMany`
+
+Same shape, plus per-action counters `added`/`deleted`/`updated` and a per-item `action` echoed back. An unknown `LinkSyncAction` value from a client is rejected before any work.
+
+## Configuration reads
+
+`NodeReadConfigFiles` reports `source = RUNNING` when the node is currently running (the server saves live configuration into a temporary directory) or `ARCHIVE` otherwise (it reads the project's `configs` directory). It always returns `status = OK` even when reading failed; the failure is in the status message. This lets the console display an empty or stale configuration instead of dropping the whole prompt.
+
+## Shutdown
+
+`netemServer.Close` iterates a snapshot of the project IDs and calls `ProjectClose(id, nil)` for each. Errors are logged and the remaining projects are still closed. `ProjectClose`:
+
+- takes `projectOpsMu`;
+- calls `Topology.Close(nil)` (removes nodes, bridges, management network and OVS instance);
+- deletes the registry entry;
+- removes the temporary directory.
+
+Because containers are force-removed, a crash of the server may leave containers behind. `ServerCleanContainers` (`gonetem-console clean`) removes them by name, and only for projects that are not open.
+
+## Logging and observability
+
+- logrus is the only logging facility; there is no metrics endpoint and no tracing.
+- Per-operation debug logs include timings, which makes `-verbose` the first tool for performance work: `Run: all link setups took ...`, `Close: node removal took ...`, `Load: CheckTopology took ...`.
+- Handlers attach `project` and `node` fields to their log entries.
+- The server writes nothing to stdout; the console renders all user-facing output.
+
+## Testing hooks
+
+The service layer is exercised by unit tests with fake nodes and injectable functions:
+
+- `routeApplier` replaces the netlink path in `RouteInstall` tests;
+- `qosBatchApplier` (topology) replaces `link.ApplyQoSBatch` in link batch tests;
+- topology tests construct managers directly and use the fallback linear link lookup, which is why `getLinkLocked` keeps a non-indexed path;
+- tests that need namespaces or qdiscs are skipped unless run as root (`skipUnlessRoot`).
+
+See [Testing](../testing.md) for how to run them.
+
+## Extending the service
+
+To add an RPC:
+
+1.  add the RPC and messages to `internal/proto/netem.proto`;
+2.  run `make proto`;
+3.  implement the method on `*netemServer`;
+4.  convert request/response types in `internal/server` (keep protobuf out of the topology manager);
+5.  add tests; use a seam if the logic needs the kernel;
+6.  document it in [gRPC API](../api.md).
+
+Guidelines:
+
+- return gRPC errors for "cannot do this at all" and in-band `Status` for expected per-item failures;
+- preserve request order in batch results;
+- never hold the topology write lock while doing Docker or netlink work that does not need it;
+- use the existing worker-pool limits rather than unbounded goroutines.
+
+## See also
+
+- [Architecture](../architecture.md) — components and data model.
+- [Topology engine](topology.md) — the engine behind most handlers.
+- [gRPC API](../api.md) — the wire contract.

@@ -2,15 +2,15 @@
 
 Operating contract for AI coding agents working on GoNetEm. Human contributors
 should read [`CONTRIBUTING.md`](CONTRIBUTING.md); the detailed manual is
-[`docs/source/development.rst`](docs/source/development.rst) and the refactor
-roadmap is [`docs/source/refactor-plan.rst`](docs/source/refactor-plan.rst).
+[`docs/development.md`](docs/development.md) and the refactor
+roadmap is [`docs/refactor-plan.md`](docs/refactor-plan.md).
 
 ## Read first
 
 1. This file.
 2. The phase issue or specification for the task.
 3. The relevant package and its tests.
-4. `docs/source/architecture.rst` and the matching `internals/*` page.
+4. `docs/architecture.md` and the matching `internals/*` page.
 
 If the task has no acceptance criteria, write them down and get agreement before
 coding. Specification-first is not optional.
@@ -101,7 +101,7 @@ Refactoring is not a licence for a broad rewrite. Stay inside the task's scope.
 Run the fast gate:
 
 ```bash
-make check          # gofmt, vet, golangci-lint, unit, race, build
+make check          # gofmt, vet, golangci-lint, docs, unit, race, build
 make cover-check    # coverage profile + .coverage-thresholds ratchet
 ```
 
@@ -137,7 +137,7 @@ Then:
 | `internal/proto` | Generated protobuf/gRPC code. **Never edit by hand.** |
 | `tests/` | Python gRPC end-to-end tests against a running server. |
 | `scripts/check-coverage.sh` | Per-package coverage ratchet used by `make cover-check` and CI. |
-| `docs/` | Sphinx manual and the refactor roadmap. |
+| `docs/` | Local Markdown manual, internals pages and the refactor roadmap. |
 
 Run `make proto` only when `internal/proto/netem.proto` changes, and commit the
 generated files together with the contract change.
@@ -213,14 +213,14 @@ Required status checks on `develop` and `master`:
 - `Lint` — gofmt, `go vet`, `golangci-lint` (including curated `revive`, `gosec` and `dupl`), `go mod tidy -diff`. The gosec exceptions in `.golangci.yml` are intentional adapter patterns; do not add a new exclusion without a written justification.
 - `Unit tests` — `go test -short -race`, coverage artifact.
 - `Build` — cross-compiled server and console binaries.
-- `Docs` — Sphinx with warnings as errors.
+- `Docs` — local Markdown check (`scripts/check-docs.py`): links, anchors, structure and version consistency.
 - `Vulnerability scan` — `govulncheck` through
   `scripts/check-vulnerabilities.sh`; only reviewed IDs in
   `.govulncheck-allow` may remain.
 
-The privileged integration workflow is defined for nightly/manual runs and becomes
-active on the default branch after the next `master` release; until then use
-`make test-integration` locally. Never disable a failing check or add a
+The privileged integration workflow runs nightly and on demand against the
+default branch; run `make test-integration` locally before merging privileged
+changes. Never disable a failing check or add a
 blanket exclusion to land a change; fix the cause or get an explicit,
 documented exception.
 
@@ -265,6 +265,6 @@ documented exception.
 ## Refactor roadmap
 
 The repository is being brought to the SOLID + TDD standard in phases. Check
-`docs/source/refactor-plan.rst` for the current phase, its exit criteria and the
+`docs/refactor-plan.md` for the current phase, its exit criteria and the
 files in scope. If a task belongs to a later phase, do the smallest safe part
 now and link the follow-up issue instead of starting a parallel rewrite.

@@ -7,7 +7,7 @@ run:
 # Phase 0 gate: correctness, naming and dependency-direction checks that the
 # current tree can pass. The stricter sets (revive, gosec, dupl) are introduced
 # in refactor phase 9, once the baseline is clean; see
-# docs/source/refactor-plan.rst.
+# docs/refactor-plan.md.
 linters:
   default: none
   enable:

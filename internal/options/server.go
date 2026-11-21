@@ -14,7 +14,7 @@ import (
 // VERSION is a variable so release builds can override it with:
 //
 //	-ldflags "-X github.com/satcomprojects/gonetem/internal/options.VERSION=..."
-var VERSION = "0.9.0"
+var VERSION = "0.9.1"
 
 const (
 	IMAGE_VERSION         = "0.6.0"

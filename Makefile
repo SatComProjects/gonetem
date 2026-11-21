@@ -174,13 +174,16 @@ cover:
 cover-check: cover
 	./scripts/check-coverage.sh $(COVERAGE_FILE) $(COVERAGE_THRESHOLDS)
 
+docs-check:
+	python3 scripts/check-docs.py
+
 govulncheck:
 	./scripts/check-vulnerabilities.sh
 
 build:
 	$(GO) build ./...
 
-check: fmt-check vet lint test-unit test-race build
+check: fmt-check vet lint docs-check test-unit test-race build
 
 .PHONY: clean proto build-amd64 build-amrv7 build-arm64 build-deb-amd64 build-deb-arm64 install-amd64 install-arm64 \
-	fmt fmt-check vet lint test test-unit test-race test-integration cover cover-check govulncheck build check
+	fmt fmt-check vet lint docs-check test test-unit test-race test-integration cover cover-check govulncheck build check
